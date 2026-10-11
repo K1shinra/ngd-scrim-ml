@@ -2,10 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftRight,
   ArrowUpRight,
-   Check,
+  Camera,
+  Check,
   ClipboardPaste,
   Copy,
+  Crown,
+  History,
   ListOrdered,
+  Loader2,
   LogIn,
   LogOut,
   Lock,
@@ -15,8 +19,10 @@ import {
   RefreshCw,
   Search,
   Settings,
+  Shield,
   ShieldCheck,
   Shuffle,
+  Sparkles,
   Sun,
   Swords,
   Trash2,
@@ -28,12 +34,16 @@ import {
 import { useAuth } from './context/AuthContext';
 import {
   clearAllPlayersFromSupabase,
+  clearMatchHistoryFromSupabase,
+  deleteMatchHistoryFromSupabase,
   deletePlayerFromSupabase,
   fetchFromSupabase,
+  insertMatchHistoryToSupabase,
   supabaseClient,
   syncToSupabase,
 } from './lib/supabase';
 import {
+  CORE_FIVE_ROLES,
   INITIAL_LIVE_MATCH,
   INITIAL_MATCH_HISTORY,
   INITIAL_PLAYERS,
@@ -42,6 +52,7 @@ import {
   LiveMatchState,
   MLBB_ROLES,
   MatchHistoryRecord,
+  MatchParticipant,
   MlbbRole,
   PlayerProfile,
   QueuedPlayer,
@@ -54,13 +65,14 @@ import { NgdBrandEmblem, RoleBadge, RoleIcon } from './components/NgdIcons';
 import {
   autoBalance5v5,
   buildDirectLineup5v5,
+  formatBattleResultGcText,
   formatGcText,
   getPlayerWinrate,
   parseTraditionalGcText,
 } from './utils/scrimEngine';
 
 type ActiveTab = 'queue' | 'match' | 'leaderboard' | 'settings';
-type LeaderboardSort = 'wins' | 'winrate' | 'matches';
+type LeaderboardSort = 'wins' | 'mvp' | 'winrate' | 'matches';
 type ThemeMode = 'light' | 'dark' | 'system';
 type Language = 'en' | 'tl';
 
@@ -147,21 +159,47 @@ const TRANSLATIONS = {
     assignedLabel: 'Assigned Lane',
     swapBtn: 'Swap',
     selectTargetBtn: 'Select Player...',
-    finishMatchTitle: 'Match Finished? Select the Winning Team:',
+    finishMatchTitle: 'Battle Result & Screenshot Auto-Reader',
     finishMatchDesc:
-      'Automatically updates Wins, Losses, and Winrate (%) on the Leaderboard.',
+      'Upload an MLBB Battle Result screenshot to auto-read stats, or select each team’s best player (MVP/SVP), enter the Kill Score, and tap the winning team.',
+    uploadScreenshotBtn: 'Upload Battle Result Screenshot',
+    scanningScreenshotText: 'Scanning MLBB Battle Result...',
+    scannedReadyBadge: 'Screenshot Scanned — Stats & Rosters Auto-Filled!',
+    confirmScannedWinnerBtn: 'Confirm & Save Scanned Result',
+    blueMvpLabel: '🔵 Team Blue Best Player (MVP if Blue Wins)',
+    redMvpLabel: '🔴 Team Red Best Player (MVP if Red Wins)',
+    blueKillsLabel: 'Blue Kills',
+    redKillsLabel: 'Red Kills',
+    matchDurationLabel: 'Duration (Optional)',
+    matchDurationPlaceholder: 'e.g. 17:44',
     blueWonBtn: 'Team Blue Won',
     redWonBtn: 'Team Red Won',
+    matchHistoryTitle: 'Recent Battle Results (Match History)',
+    matchHistoryDesc:
+      'Completed 5v5 games with Winner, Kill Score, Match MVP, KDA, and one-click Copy for Messenger GC.',
+    copyResultBtn: 'Copy Battle Result',
+    clearHistoryBtn: 'Clear History',
+    emptyHistoryText:
+      'No battle results recorded yet. Upload a screenshot or finish a 5v5 game above to log match results.',
+    toastResultCopied: 'Battle Result copied! Ready to paste in Messenger GC.',
+    toastHistoryDeleted: 'Deleted match result from history.',
+    toastHistoryCleared: 'Cleared all match history records.',
+    toastScanSuccess:
+      'Battle Result scanned! Check auto-filled stats & click Confirm Winner.',
+    toastScanError: 'Could not read screenshot. Please check the image or enter stats manually.',
     leaderboardTitle: 'NGD Scrim Leaderboard',
-    leaderboardDesc: 'Player standings based on Custom 5v5 Wins and Winrate (%).',
+    leaderboardDesc:
+      'Player standings based on Custom 5v5 Wins, MVPs, and Winrate (%).',
     searchIgnPlaceholder: 'Search player IGN...',
     sortWins: 'Wins',
+    sortMvp: 'MVP',
     sortWr: 'Winrate %',
     sortGames: 'Matches',
     colPlayer: 'Player IGN',
     colRole: 'Role',
     colGames: 'Matches',
     colWL: 'Win - Loss',
+    colMvp: 'MVP',
     colWinrate: 'Winrate',
     settingsTitle: 'System Settings',
     settingsDesc:
@@ -279,22 +317,48 @@ const TRANSLATIONS = {
     assignedLabel: 'Naka-assign na Lane',
     swapBtn: 'Palitan',
     selectTargetBtn: 'Pumili ng Kapalit...',
-    finishMatchTitle: 'Tapos na ang Laro? Piliin kung Sino ang Nanalo:',
+    finishMatchTitle: 'Battle Result at Screenshot Auto-Reader',
     finishMatchDesc:
-      'Awtomatikong madadagdagan ang Panalo, Talo, at Winrate (%) ng 10 manlalaro sa Ranggo.',
+      'Mag-upload ng MLBB Battle Result screenshot para automatic mabasa ang stats, o piliin ang MVP/SVP, ilagay ang Kill Score, at pindutin kung sino ang nanalo.',
+    uploadScreenshotBtn: 'I-upload ang Battle Result Screenshot',
+    scanningScreenshotText: 'Binabasa ang MLBB Battle Result...',
+    scannedReadyBadge: 'Nabasa na ang Screenshot — Auto-Filled na ang Stats at Players!',
+    confirmScannedWinnerBtn: 'I-save ang Resulta Mula sa Screenshot',
+    blueMvpLabel: '🔵 Team Blue Best Player (MVP kapag Blue Nanalo)',
+    redMvpLabel: '🔴 Team Red Best Player (MVP kapag Red Nanalo)',
+    blueKillsLabel: 'Blue Kills',
+    redKillsLabel: 'Red Kills',
+    matchDurationLabel: 'Oras ng Laro (Opsyonal)',
+    matchDurationPlaceholder: 'hal. 17:44',
     blueWonBtn: 'Nanalo ang Team Blue',
     redWonBtn: 'Nanalo ang Team Red',
+    matchHistoryTitle: 'Mga Natapos na Laro (Battle Results History)',
+    matchHistoryDesc:
+      'Listahan ng mga natapos na 5v5 games kasama ang Winner, Kill Score, MVP, KDA, at Copy Result para sa GC.',
+    copyResultBtn: 'Kopyahin ang Resulta',
+    clearHistoryBtn: 'Burahin ang History',
+    emptyHistoryText:
+      'Wala pang naitalang Battle Result. Mag-upload ng screenshot o pumili ng nanalo sa itaas pagkatapos ng laro.',
+    toastResultCopied:
+      'Nakopya na ang Battle Result! Pwede nang i-paste sa Messenger GC.',
+    toastHistoryDeleted: 'Nabura na ang match result.',
+    toastHistoryCleared: 'Nabura na lahat ng match history.',
+    toastScanSuccess:
+      'Nabasa na ang Battle Result screenshot! Pindutin ang Save Result para ma-update ang Leaderboard.',
+    toastScanError: 'Hindi nabasa ang screenshot. Pakisubukan ulit o ilagay nang manual.',
     leaderboardTitle: 'NGD Scrim Ranggo at Estadistika',
     leaderboardDesc:
-      'Listahan at ranggo ng mga manlalaro base sa Panalo at Winrate (%) sa Custom 5v5.',
+      'Listahan at ranggo ng mga manlalaro base sa Panalo, MVP, at Winrate (%) sa Custom 5v5.',
     searchIgnPlaceholder: 'Hanapin ang IGN ng manlalaro...',
     sortWins: 'Panalo',
+    sortMvp: 'MVP',
     sortWr: 'Winrate %',
     sortGames: 'Laro',
     colPlayer: 'Manlalaro (IGN)',
     colRole: 'Role',
     colGames: 'Laro',
     colWL: 'Panalo - Talo',
+    colMvp: 'MVP',
     colWinrate: 'Winrate',
     settingsTitle: 'Settings ng System',
     settingsDesc:
@@ -348,6 +412,48 @@ const TRANSLATIONS = {
   },
 };
 
+function dedupePlayers(list: PlayerProfile[]): PlayerProfile[] {
+  const seenIgns = new Set<string>();
+  const seenIds = new Set<string>();
+  const result: PlayerProfile[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    if (!p || !p.ign) continue;
+    const normIgn = p.ign.trim().toLowerCase();
+    if (seenIgns.has(normIgn)) continue;
+    seenIgns.add(normIgn);
+    let safeId = p.id || `ngd-p-${i + 1}`;
+    if (seenIds.has(safeId)) {
+      safeId = `${safeId}-${i + 1}`;
+    }
+    seenIds.add(safeId);
+    result.push({ ...p, id: safeId });
+  }
+  return result;
+}
+
+function dedupeMatchHistory(
+  records: MatchHistoryRecord[]
+): MatchHistoryRecord[] {
+  const seenSignatures = new Set<string>();
+  const seenIds = new Set<string>();
+  const result: MatchHistoryRecord[] = [];
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    if (!r) continue;
+    const sig = `${r.id}|${r.completedAt}|${r.winner}|${r.mvpIgn}`;
+    if (seenSignatures.has(sig)) continue;
+    seenSignatures.add(sig);
+    let safeId = r.id || `NGD-M${String(i + 1).padStart(2, '0')}`;
+    if (seenIds.has(safeId)) {
+      safeId = `${safeId}-${i + 1}`;
+    }
+    seenIds.add(safeId);
+    result.push({ ...r, id: safeId });
+  }
+  return result;
+}
+
 export default function App() {
   const { user, signInWithGoogle, signOut, getFreshToken } = useAuth();
   const hasLoadedInitialCloudRef = useRef(false);
@@ -355,7 +461,7 @@ export default function App() {
   const [players, setPlayers] = useState<PlayerProfile[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.players);
-      return saved ? JSON.parse(saved) : INITIAL_PLAYERS;
+      return saved ? dedupePlayers(JSON.parse(saved)) : INITIAL_PLAYERS;
     } catch {
       return INITIAL_PLAYERS;
     }
@@ -391,7 +497,9 @@ export default function App() {
   const [matchHistory, setMatchHistory] = useState<MatchHistoryRecord[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.history);
-      return saved ? JSON.parse(saved) : INITIAL_MATCH_HISTORY;
+      return saved
+        ? dedupeMatchHistory(JSON.parse(saved))
+        : INITIAL_MATCH_HISTORY;
     } catch {
       return INITIAL_MATCH_HISTORY;
     }
@@ -465,7 +573,7 @@ export default function App() {
         if (!remote || cancelled) return;
 
         if (remote.hasPlayers || remote.liveMatch) {
-          setPlayers(remote.players);
+          setPlayers(dedupePlayers(remote.players));
         }
         if (remote.hasSlots || remote.hasPlayers || remote.liveMatch) {
           setSlots(remote.slots);
@@ -474,7 +582,7 @@ export default function App() {
           setLiveMatch(remote.liveMatch);
         }
         if (remote.hasHistory) {
-          setMatchHistory(remote.matchHistory);
+          setMatchHistory(dedupeMatchHistory(remote.matchHistory));
         }
         if (!remote.hasPlayers && !remote.hasSlots && !remote.liveMatch) {
           await syncToSupabase({
@@ -526,7 +634,7 @@ export default function App() {
         const data = await res.json();
         if (cancelled) return;
         if (Array.isArray(data.players)) {
-          setPlayers(data.players);
+          setPlayers(dedupePlayers(data.players));
         }
         if (Array.isArray(data.slots) && data.slots.length === 20) {
           setSlots(data.slots);
@@ -535,7 +643,7 @@ export default function App() {
           setLiveMatch(data.liveMatch);
         }
         if (Array.isArray(data.matchHistory)) {
-          setMatchHistory(data.matchHistory);
+          setMatchHistory(dedupeMatchHistory(data.matchHistory));
         }
         hasLoadedInitialCloudRef.current = true;
       } catch {
@@ -624,6 +732,34 @@ export default function App() {
     team: 'Blue' | 'Red';
     index: number;
   } | null>(null);
+  const [blueStarIgn, setBlueStarIgn] = useState<string>('');
+  const [redStarIgn, setRedStarIgn] = useState<string>('');
+  const [blueKillsInput, setBlueKillsInput] = useState<string>('');
+  const [redKillsInput, setRedKillsInput] = useState<string>('');
+  const [matchDurationInput, setMatchDurationInput] = useState<string>('');
+  const [isScanningScreenshot, setIsScanningScreenshot] = useState(false);
+  const [scannedPreviewUrl, setScannedPreviewUrl] = useState<string | null>(
+    null
+  );
+  const [scannedDetectedWinner, setScannedDetectedWinner] = useState<
+    'Blue' | 'Red' | null
+  >(null);
+  const screenshotInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const blueHasCurrent = liveMatch.teamBlue.some(
+      (p) => p.ign.toLowerCase() === blueStarIgn.toLowerCase()
+    );
+    if (!blueHasCurrent && liveMatch.teamBlue[0]) {
+      setBlueStarIgn(liveMatch.teamBlue[0].ign);
+    }
+    const redHasCurrent = liveMatch.teamRed.some(
+      (p) => p.ign.toLowerCase() === redStarIgn.toLowerCase()
+    );
+    if (!redHasCurrent && liveMatch.teamRed[0]) {
+      setRedStarIgn(liveMatch.teamRed[0].ign);
+    }
+  }, [liveMatch.teamBlue, liveMatch.teamRed, blueStarIgn, redStarIgn]);
 
   // Leaderboard State
   const [leaderboardSort, setLeaderboardSort] =
@@ -1032,11 +1168,230 @@ export default function App() {
     triggerToast(t.toastSwapped);
   };
 
+  const compressImageFileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1600;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(String(reader.result));
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        };
+        img.onerror = () => reject(new Error('Invalid image file'));
+        img.src = String(reader.result);
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleUploadBattleScreenshot = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    setIsScanningScreenshot(true);
+    try {
+      const compressedDataUrl = await compressImageFileToBase64(file);
+      setScannedPreviewUrl(compressedDataUrl);
+
+      const knownIgns = Array.from(
+        new Set([
+          ...players.map((p) => p.ign),
+          ...slots.filter((s): s is ScrimSlot => s !== null).map((s) => s.ign),
+          ...liveMatch.teamBlue.map((p) => p.ign),
+          ...liveMatch.teamRed.map((p) => p.ign),
+        ])
+      );
+
+      const res = await fetch('/api/scrim/analyze-screenshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: compressedDataUrl,
+          mimeType: 'image/jpeg',
+          knownIgns,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to analyze screenshot');
+      }
+
+      const data = await res.json();
+
+      const buildScannedRoster = (
+        extractedList: {
+          ign: string;
+          kda: string;
+          rating: string;
+          isMvp: boolean;
+        }[],
+        currentTeam: MatchParticipant[]
+      ): MatchParticipant[] => {
+        if (!Array.isArray(extractedList) || extractedList.length === 0) {
+          return currentTeam;
+        }
+        return extractedList.slice(0, 5).map((item, idx) => {
+          const cleanIgn = item.ign.trim() || `Player ${idx + 1}`;
+          const existingInTeam = currentTeam.find(
+            (p) => p.ign.toLowerCase() === cleanIgn.toLowerCase()
+          );
+          const existingInSlot = slots.find(
+            (s) => s && s.ign.toLowerCase() === cleanIgn.toLowerCase()
+          );
+          const existingInProfile = players.find(
+            (p) => p.ign.toLowerCase() === cleanIgn.toLowerCase()
+          );
+
+          const assignedLane: MlbbRole =
+            existingInTeam?.assignedLane ||
+            (existingInSlot?.role && existingInSlot.role !== 'Flex Role'
+              ? existingInSlot.role
+              : undefined) ||
+            (existingInProfile?.primaryRole &&
+            existingInProfile.primaryRole !== 'Flex Role'
+              ? existingInProfile.primaryRole
+              : undefined) ||
+            CORE_FIVE_ROLES[idx % CORE_FIVE_ROLES.length];
+
+          const selectedRole: MlbbRole =
+            existingInTeam?.selectedRole ||
+            existingInSlot?.role ||
+            existingInProfile?.primaryRole ||
+            assignedLane;
+
+          const secondaryRole: MlbbRole | undefined =
+            existingInTeam?.secondaryRole ||
+            existingInSlot?.secondaryRole ||
+            existingInProfile?.secondaryRole;
+
+          const roleLabel =
+            existingInTeam?.roleLabel ||
+            existingInSlot?.roleLabel ||
+            existingInProfile?.roleLabel ||
+            ROLE_META[assignedLane].gcLabel;
+
+          return {
+            ign: existingInProfile?.ign || existingInSlot?.ign || cleanIgn,
+            selectedRole,
+            secondaryRole,
+            roleLabel,
+            assignedLane,
+            winrateSnapshot: getPlayerWinrate(cleanIgn, players),
+            kda: item.kda || undefined,
+            rating: item.rating || undefined,
+          };
+        });
+      };
+
+      const nextBlue = buildScannedRoster(data.teamBlue, liveMatch.teamBlue);
+      const nextRed = buildScannedRoster(data.teamRed, liveMatch.teamRed);
+
+      const detectedWinner: 'Blue' | 'Red' =
+        data.winner === 'Red' ? 'Red' : 'Blue';
+
+      const detectedBlueStar =
+        nextBlue.find((p) =>
+          data.teamBlue?.some(
+            (x: { ign: string; isMvp: boolean }) =>
+              x.isMvp && x.ign.toLowerCase() === p.ign.toLowerCase()
+          )
+        )?.ign ||
+        (detectedWinner === 'Blue' && data.mvpIgn ? data.mvpIgn : '') ||
+        (detectedWinner === 'Red' && data.svpIgn ? data.svpIgn : '') ||
+        nextBlue[0]?.ign ||
+        '';
+
+      const detectedRedStar =
+        nextRed.find((p) =>
+          data.teamRed?.some(
+            (x: { ign: string; isMvp: boolean }) =>
+              x.isMvp && x.ign.toLowerCase() === p.ign.toLowerCase()
+          )
+        )?.ign ||
+        (detectedWinner === 'Red' && data.mvpIgn ? data.mvpIgn : '') ||
+        (detectedWinner === 'Blue' && data.svpIgn ? data.svpIgn : '') ||
+        nextRed[0]?.ign ||
+        '';
+
+      setLiveMatch((prev) => ({
+        ...prev,
+        teamBlue: nextBlue,
+        teamRed: nextRed,
+        mvpIgn:
+          detectedWinner === 'Blue' ? detectedBlueStar : detectedRedStar,
+      }));
+
+      if (detectedBlueStar) setBlueStarIgn(detectedBlueStar);
+      if (detectedRedStar) setRedStarIgn(detectedRedStar);
+      if (typeof data.blueKills === 'number') {
+        setBlueKillsInput(String(data.blueKills));
+      }
+      if (typeof data.redKills === 'number') {
+        setRedKillsInput(String(data.redKills));
+      }
+      if (data.duration) {
+        setMatchDurationInput(String(data.duration));
+      }
+      setScannedDetectedWinner(detectedWinner);
+      triggerToast(t.toastScanSuccess);
+    } catch {
+      triggerToast(t.toastScanError);
+    } finally {
+      setIsScanningScreenshot(false);
+    }
+  };
+
   const handleFinishMatch = (winner: 'Blue' | 'Red') => {
     const winningRoster =
       winner === 'Blue' ? liveMatch.teamBlue : liveMatch.teamRed;
     const losingRoster =
       winner === 'Blue' ? liveMatch.teamRed : liveMatch.teamBlue;
+
+    const winningMvpIgn =
+      winner === 'Blue'
+        ? blueStarIgn || liveMatch.teamBlue[0]?.ign || liveMatch.mvpIgn
+        : redStarIgn || liveMatch.teamRed[0]?.ign || liveMatch.mvpIgn;
+
+    const losingSvpIgn =
+      winner === 'Blue'
+        ? redStarIgn || liveMatch.teamRed[0]?.ign || ''
+        : blueStarIgn || liveMatch.teamBlue[0]?.ign || '';
+
+    const bKills = blueKillsInput.trim();
+    const rKills = redKillsInput.trim();
+    const dur = matchDurationInput.trim();
+    let formattedKillScore = '';
+    if (bKills !== '' || rKills !== '') {
+      formattedKillScore = `Blue ${bKills || '0'} - ${rKills || '0'} Red${
+        dur ? ` (${dur})` : ''
+      }`;
+    } else if (dur) {
+      formattedKillScore = dur;
+    }
 
     const allParticipants = [
       ...winningRoster.map((p) => ({ ...p, won: true })),
@@ -1047,6 +1402,10 @@ export default function App() {
       const updated = [...prevPlayers];
 
       for (const participant of allParticipants) {
+        const isWinningMvp =
+          participant.won &&
+          participant.ign.toLowerCase() === winningMvpIgn.toLowerCase();
+
         const idx = updated.findIndex(
           (pl) => pl.ign.toLowerCase() === participant.ign.toLowerCase()
         );
@@ -1057,6 +1416,7 @@ export default function App() {
             ...existing,
             wins: existing.wins + (participant.won ? 1 : 0),
             losses: existing.losses + (participant.won ? 0 : 1),
+            mvpCount: (existing.mvpCount || 0) + (isWinningMvp ? 1 : 0),
             roleCounts: {
               ...existing.roleCounts,
               [participant.assignedLane]:
@@ -1073,7 +1433,7 @@ export default function App() {
             roleLabel: participant.roleLabel,
             wins: participant.won ? 1 : 0,
             losses: participant.won ? 0 : 1,
-            mvpCount: 0,
+            mvpCount: isWinningMvp ? 1 : 0,
             streak: participant.won ? 1 : -1,
             roleCounts: {
               Jungle: participant.assignedLane === 'Jungle' ? 1 : 0,
@@ -1092,16 +1452,28 @@ export default function App() {
       return updated;
     });
 
+    const existingIds = new Set(matchHistory.map((m) => m.id));
+    let nextNum = matchHistory.length + 1;
+    let nextMatchId = `NGD-M${String(nextNum).padStart(2, '0')}`;
+    while (existingIds.has(nextMatchId)) {
+      nextNum += 1;
+      nextMatchId = `NGD-M${String(nextNum).padStart(2, '0')}`;
+    }
+
     const newRecord: MatchHistoryRecord = {
-      id: liveMatch.matchId,
+      id: nextMatchId,
       roomName: liveMatch.roomName,
       completedAt: getCurrentTimeLabel(),
       winner,
-      mvpIgn: liveMatch.mvpIgn,
+      mvpIgn: winningMvpIgn,
+      svpIgn: losingSvpIgn || undefined,
+      killScore: formattedKillScore || undefined,
       teamBlue: liveMatch.teamBlue,
       teamRed: liveMatch.teamRed,
-      durationText: 'Finished',
+      durationText: dur || 'Finished',
     };
+
+    insertMatchHistoryToSupabase(newRecord).catch(() => {});
 
     const targetWins =
       liveMatch.seriesFormat === 'BO5'
@@ -1127,23 +1499,61 @@ export default function App() {
 
     setLiveMatch((prev) => ({
       ...prev,
+      mvpIgn: winningMvpIgn,
       blueSeriesWins: nextBlueWins,
       redSeriesWins: nextRedWins,
     }));
 
     setMatchHistory((prev) => [newRecord, ...prev]);
+    setBlueKillsInput('');
+    setRedKillsInput('');
+    setMatchDurationInput('');
+    setScannedPreviewUrl(null);
+    setScannedDetectedWinner(null);
 
     if (targetWins === 1) {
-      triggerToast(`Team ${winner} Won! Leaderboard updated.`);
+      triggerToast(
+        `Team ${winner} Won! 👑 MVP: ${winningMvpIgn} (+1 Win & +1 MVP)`
+      );
     } else if (nextBlueWins >= targetWins || nextRedWins >= targetWins) {
       triggerToast(
-        `🏆 Team ${winner} Won the ${liveMatch.seriesFormat} Series (${nextBlueWins}–${nextRedWins})! Leaderboard updated.`
+        `🏆 Team ${winner} Won ${liveMatch.seriesFormat} (${nextBlueWins}–${nextRedWins})! 👑 MVP: ${winningMvpIgn}`
       );
     } else {
       triggerToast(
-        `Team ${winner} Won Game ${nextBlueWins + nextRedWins}! Series Score: Blue ${nextBlueWins}–${nextRedWins} Red`
+        `Team ${winner} Won Game ${nextBlueWins + nextRedWins} (${nextBlueWins}–${nextRedWins})! 👑 MVP: ${winningMvpIgn}`
       );
     }
+  };
+
+  const handleCopyBattleResult = async (record: MatchHistoryRecord) => {
+    const text = formatBattleResultGcText(record);
+    try {
+      await navigator.clipboard.writeText(text);
+      triggerToast(t.toastResultCopied);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      triggerToast(t.toastResultCopied);
+    }
+  };
+
+  const handleDeleteMatchHistoryItem = async (matchId: string) => {
+    if (!isAdmin) return;
+    setMatchHistory((prev) => prev.filter((m) => m.id !== matchId));
+    await deleteMatchHistoryFromSupabase(matchId).catch(() => {});
+    triggerToast(t.toastHistoryDeleted);
+  };
+
+  const handleClearMatchHistory = async () => {
+    if (!isAdmin) return;
+    setMatchHistory([]);
+    await clearMatchHistoryFromSupabase().catch(() => {});
+    triggerToast(t.toastHistoryCleared);
   };
 
   // --- ADMIN / DEVELOPER LEADERBOARD DELETION HANDLERS ---
@@ -1249,6 +1659,8 @@ export default function App() {
         const totalB = b.wins + b.losses;
 
         if (leaderboardSort === 'wins') return b.wins - a.wins || wrB - wrA;
+        if (leaderboardSort === 'mvp')
+          return (b.mvpCount || 0) - (a.mvpCount || 0) || b.wins - a.wins;
         if (leaderboardSort === 'winrate') return wrB - wrA || b.wins - a.wins;
         return totalB - totalA || b.wins - a.wins;
       });
@@ -1964,11 +2376,19 @@ export default function App() {
                                 ({member.roleLabel})
                               </span>
                             </div>
-                            <div
-                              className={`text-[11px] sm:text-xs font-mono truncate ${ROLE_META[member.assignedLane].textClass}`}
-                            >
-                              {t.assignedLabel}:{' '}
-                              {ROLE_META[member.assignedLane].gcLabel}
+                            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                              <span
+                                className={`text-[11px] sm:text-xs font-mono truncate ${ROLE_META[member.assignedLane].textClass}`}
+                              >
+                                {t.assignedLabel}:{' '}
+                                {ROLE_META[member.assignedLane].gcLabel}
+                              </span>
+                              {member.kda && (
+                                <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-[10px] font-mono font-bold text-cyan-700 dark:text-[#00f2fe]">
+                                  {member.kda}
+                                  {member.rating ? ` · ${member.rating}` : ''}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -2034,11 +2454,19 @@ export default function App() {
                                 ({member.roleLabel})
                               </span>
                             </div>
-                            <div
-                              className={`text-[11px] sm:text-xs font-mono truncate ${ROLE_META[member.assignedLane].textClass}`}
-                            >
-                              {t.assignedLabel}:{' '}
-                              {ROLE_META[member.assignedLane].gcLabel}
+                            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                              <span
+                                className={`text-[11px] sm:text-xs font-mono truncate ${ROLE_META[member.assignedLane].textClass}`}
+                              >
+                                {t.assignedLabel}:{' '}
+                                {ROLE_META[member.assignedLane].gcLabel}
+                              </span>
+                              {member.kda && (
+                                <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-[10px] font-mono font-bold text-rose-600 dark:text-rose-400">
+                                  {member.kda}
+                                  {member.rating ? ` · ${member.rating}` : ''}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -2064,33 +2492,332 @@ export default function App() {
               </section>
             </div>
 
-            {/* Record Winner */}
-            <section className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs overflow-hidden">
-              <div className="min-w-0">
-                <h3 className="text-base font-display font-bold text-slate-900 dark:text-white">
-                  {t.finishMatchTitle}
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {t.finishMatchDesc}
-                </p>
+            {/* Record Battle Result (Screenshot Auto-Reader + MVP/SVP + Kill Score + Winner) */}
+            <section className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs overflow-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3.5">
+                <div className="min-w-0">
+                  <h3 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <Trophy className="w-4 h-4 text-[#f1c40f] shrink-0" />
+                    <span className="truncate">{t.finishMatchTitle}</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {t.finishMatchDesc}
+                  </p>
+                </div>
+
+                {/* Upload MLBB Battle Result Screenshot Button */}
+                <div className="shrink-0 w-full sm:w-auto">
+                  <input
+                    ref={screenshotInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleUploadBattleScreenshot}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={isScanningScreenshot}
+                    onClick={() => screenshotInputRef.current?.click()}
+                    className="w-full sm:w-auto min-h-[42px] px-4 py-2 rounded-xl bg-[#f1c40f] hover:bg-yellow-300 disabled:opacity-60 text-slate-950 font-display font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {isScanningScreenshot ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                        <span className="truncate">
+                          {t.scanningScreenshotText}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Camera className="w-4 h-4 stroke-[2.3] shrink-0" />
+                        <span className="truncate">
+                          {t.uploadScreenshotBtn}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full sm:w-auto shrink-0">
+              {/* Scanned Screenshot Preview Banner (Appears after uploading screenshot) */}
+              {scannedPreviewUrl && scannedDetectedWinner && (
+                <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/35 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <img
+                      src={scannedPreviewUrl}
+                      alt="Scanned MLBB Battle Result"
+                      className="w-16 h-11 object-cover rounded-lg border border-emerald-500/40 shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                        <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">{t.scannedReadyBadge}</span>
+                      </div>
+                      <div className="text-xs font-mono text-slate-700 dark:text-slate-300 mt-0.5 truncate">
+                        {scannedDetectedWinner === 'Blue'
+                          ? '🔵 Team Blue Victory'
+                          : '🔴 Team Red Victory'}{' '}
+                        · ⚔️ {blueKillsInput || 0} - {redKillsInput || 0}
+                        {matchDurationInput ? ` (${matchDurationInput})` : ''} ·
+                        👑 MVP:{' '}
+                        {scannedDetectedWinner === 'Blue'
+                          ? blueStarIgn
+                          : redStarIgn}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleFinishMatch(scannedDetectedWinner)}
+                    className="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <Check className="w-4 h-4 stroke-[2.5] shrink-0" />
+                    <span className="truncate">
+                      {t.confirmScannedWinnerBtn} (Team {scannedDetectedWinner})
+                    </span>
+                  </button>
+                </div>
+              )}
+
+              {/* MVP / SVP & Kill Score Inputs */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-1">
+                {/* Team Blue Star / MVP Selector */}
+                <div className="md:col-span-4 min-w-0">
+                  <label className="block text-[11px] font-mono text-cyan-700 dark:text-[#00f2fe] font-semibold mb-1 truncate">
+                    {t.blueMvpLabel}
+                  </label>
+                  <select
+                    value={blueStarIgn}
+                    onChange={(e) => setBlueStarIgn(e.target.value)}
+                    className="w-full max-w-full min-w-0 h-10 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-cyan-500/40 dark:border-[#00f2fe]/40 text-xs font-bold text-slate-900 dark:text-white truncate focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
+                  >
+                    {liveMatch.teamBlue.map((p, idx) => (
+                      <option key={`${p.ign}-${idx}`} value={p.ign}>
+                        👑 {p.ign} ({ROLE_META[p.assignedLane].gcLabel}
+                        {p.kda ? ` · ${p.kda}` : ''})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Kill Score & Duration (Optional) */}
+                <div className="md:col-span-4 grid grid-cols-3 gap-2 min-w-0">
+                  <div className="min-w-0">
+                    <label className="block text-[11px] font-mono text-cyan-700 dark:text-[#00f2fe] mb-1 truncate">
+                      {t.blueKillsLabel}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="999"
+                      value={blueKillsInput}
+                      onChange={(e) => setBlueKillsInput(e.target.value)}
+                      placeholder="22"
+                      className="w-full min-w-0 h-10 px-2.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-center text-slate-900 dark:text-white focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <label className="block text-[11px] font-mono text-rose-600 dark:text-rose-400 mb-1 truncate">
+                      {t.redKillsLabel}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="999"
+                      value={redKillsInput}
+                      onChange={(e) => setRedKillsInput(e.target.value)}
+                      placeholder="21"
+                      className="w-full min-w-0 h-10 px-2.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-center text-slate-900 dark:text-white focus:outline-none focus:border-rose-500"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <label className="block text-[11px] font-mono text-slate-500 dark:text-slate-400 mb-1 truncate">
+                      {t.matchDurationLabel}
+                    </label>
+                    <input
+                      type="text"
+                      value={matchDurationInput}
+                      onChange={(e) => setMatchDurationInput(e.target.value)}
+                      placeholder={t.matchDurationPlaceholder}
+                      className="w-full min-w-0 h-10 px-2 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-mono text-center text-slate-900 dark:text-white focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
+                    />
+                  </div>
+                </div>
+
+                {/* Team Red Star / MVP Selector */}
+                <div className="md:col-span-4 min-w-0">
+                  <label className="block text-[11px] font-mono text-rose-600 dark:text-rose-400 font-semibold mb-1 truncate">
+                    {t.redMvpLabel}
+                  </label>
+                  <select
+                    value={redStarIgn}
+                    onChange={(e) => setRedStarIgn(e.target.value)}
+                    className="w-full max-w-full min-w-0 h-10 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-rose-500/40 text-xs font-bold text-slate-900 dark:text-white truncate focus:outline-none focus:border-rose-500"
+                  >
+                    {liveMatch.teamRed.map((p, idx) => (
+                      <option key={`${p.ign}-${idx}`} value={p.ign}>
+                        👑 {p.ign} ({ROLE_META[p.assignedLane].gcLabel}
+                        {p.kda ? ` · ${p.kda}` : ''})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Winner Action Buttons */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => handleFinishMatch('Blue')}
-                  className="min-h-[44px] px-4 sm:px-5 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs sm:text-sm truncate cursor-pointer"
+                  className="min-h-[46px] px-4 sm:px-5 py-2.5 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs sm:text-sm hover:opacity-95 transition flex items-center justify-center gap-2 truncate cursor-pointer"
                 >
-                  {t.blueWonBtn}
+                  <Trophy className="w-4 h-4 shrink-0" />
+                  <span className="truncate">
+                    {t.blueWonBtn} (👑 MVP: {blueStarIgn || liveMatch.teamBlue[0]?.ign})
+                  </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleFinishMatch('Red')}
-                  className="min-h-[44px] px-4 sm:px-5 py-2 rounded-xl bg-rose-500 text-white font-display font-bold text-xs sm:text-sm truncate cursor-pointer"
+                  className="min-h-[46px] px-4 sm:px-5 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-display font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 truncate cursor-pointer"
                 >
-                  {t.redWonBtn}
+                  <Trophy className="w-4 h-4 shrink-0" />
+                  <span className="truncate">
+                    {t.redWonBtn} (👑 MVP: {redStarIgn || liveMatch.teamRed[0]?.ign})
+                  </span>
                 </button>
               </div>
+            </section>
+
+            {/* Recent Battle Results (Match History Log) */}
+            <section className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs overflow-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+                <div className="min-w-0">
+                  <h3 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <History className="w-4 h-4 text-cyan-600 dark:text-[#00f2fe] shrink-0" />
+                    <span className="truncate">{t.matchHistoryTitle}</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {t.matchHistoryDesc}
+                  </p>
+                </div>
+
+                {isAdmin && matchHistory.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearMatchHistory}
+                    className="self-start sm:self-auto min-h-[36px] px-3 py-1.5 rounded-lg bg-rose-500/15 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white text-xs font-bold flex items-center gap-1.5 transition shrink-0 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>{t.clearHistoryBtn}</span>
+                  </button>
+                )}
+              </div>
+
+              {matchHistory.length === 0 ? (
+                <div className="py-6 text-center text-xs text-slate-500 dark:text-slate-400">
+                  {t.emptyHistoryText}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {matchHistory.slice(0, 10).map((record, idx) => {
+                    const isBlueWin = record.winner === 'Blue';
+                    return (
+                      <div
+                        key={`${record.id}-${record.completedAt}-${idx}`}
+                        className="p-3 sm:p-4 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 space-y-2.5 overflow-hidden"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
+                            <span
+                              className={`px-2.5 py-0.5 rounded-md text-[11px] font-display font-bold uppercase ${
+                                isBlueWin
+                                  ? 'bg-cyan-500/15 text-cyan-700 dark:text-[#00f2fe] border border-cyan-500/30'
+                                  : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                              }`}
+                            >
+                              {isBlueWin ? '🔵 Team Blue Victory' : '🔴 Team Red Victory'}
+                            </span>
+                            {record.killScore && (
+                              <span className="px-2 py-0.5 rounded-md bg-slate-200/80 dark:bg-slate-800 text-[11px] font-mono font-bold text-slate-800 dark:text-slate-200">
+                                ⚔️ {record.killScore}
+                              </span>
+                            )}
+                            <span className="text-[11px] font-mono text-slate-500">
+                              {record.id} · {record.completedAt}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleCopyBattleResult(record)}
+                              className="min-h-[34px] px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:border-cyan-600 dark:hover:border-[#00f2fe] text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Copy className="w-3.5 h-3.5 shrink-0" />
+                              <span className="truncate">{t.copyResultBtn}</span>
+                            </button>
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleDeleteMatchHistoryItem(record.id)
+                                }
+                                className="h-8 w-8 rounded-lg bg-rose-500/10 hover:bg-rose-500 text-rose-600 dark:text-rose-400 hover:text-white inline-flex items-center justify-center transition cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* MVP & SVP Highlights */}
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 dark:bg-[#f1c40f]/15 border border-amber-500/35 text-amber-800 dark:text-[#f1c40f] font-bold">
+                            <Crown className="w-3.5 h-3.5 shrink-0" />
+                            <span>Match MVP: {record.mvpIgn}</span>
+                          </span>
+                          {record.svpIgn && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-500/15 border border-purple-500/35 text-purple-700 dark:text-purple-300 font-semibold">
+                              <Shield className="w-3.5 h-3.5 shrink-0" />
+                              <span>Defeat MVP (SVP): {record.svpIgn}</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Compact Team Rosters */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px] font-mono">
+                          <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800/80 truncate">
+                            <span className="font-bold text-cyan-700 dark:text-[#00f2fe]">
+                              Blue:{' '}
+                            </span>
+                            <span className="text-slate-700 dark:text-slate-300">
+                              {record.teamBlue
+                                .map((p) =>
+                                  p.kda ? `${p.ign} (${p.kda})` : p.ign
+                                )
+                                .join(', ')}
+                            </span>
+                          </div>
+                          <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800/80 truncate">
+                            <span className="font-bold text-rose-600 dark:text-rose-400">
+                              Red:{' '}
+                            </span>
+                            <span className="text-slate-700 dark:text-slate-300">
+                              {record.teamRed
+                                .map((p) =>
+                                  p.kda ? `${p.ign} (${p.kda})` : p.ign
+                                )
+                                .join(', ')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </section>
           </div>
         )}
@@ -2122,10 +2849,11 @@ export default function App() {
                   />
                 </div>
 
-                <div className="grid grid-cols-3 sm:flex items-center gap-1 p-1 bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 rounded-lg min-w-0">
+                <div className="grid grid-cols-4 sm:flex items-center gap-1 p-1 bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 rounded-lg min-w-0">
                   {(
                     [
                       { id: 'wins', label: t.sortWins },
+                      { id: 'mvp', label: t.sortMvp },
                       { id: 'winrate', label: t.sortWr },
                       { id: 'matches', label: t.sortGames },
                     ] as const
@@ -2209,14 +2937,17 @@ export default function App() {
                     <th className="hidden sm:table-cell py-2.5 px-2.5 text-right">
                       {t.colGames}
                     </th>
-                    <th className="py-2.5 px-1.5 sm:px-2 text-right whitespace-nowrap w-22 sm:w-auto">
+                    <th className="py-2.5 px-1 sm:px-2 text-right whitespace-nowrap w-18 sm:w-auto">
                       {t.colWL}
                     </th>
-                    <th className="py-2.5 px-1.5 sm:px-2 text-right whitespace-nowrap w-16 sm:w-auto">
+                    <th className="py-2.5 px-1 sm:px-2 text-right whitespace-nowrap w-12 sm:w-auto">
+                      {t.colMvp}
+                    </th>
+                    <th className="py-2.5 px-1 sm:px-2 text-right whitespace-nowrap w-14 sm:w-auto">
                       {t.colWinrate}
                     </th>
                     {isAdmin && (
-                      <th className="py-2.5 px-1.5 sm:px-2 text-right w-10 sm:w-14">
+                      <th className="py-2.5 px-1 sm:px-2 text-right w-9 sm:w-14">
                         {t.colAction}
                       </th>
                     )}
@@ -2226,7 +2957,7 @@ export default function App() {
                   {sortedLeaderboard.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={isAdmin ? 7 : 6}
+                        colSpan={isAdmin ? 8 : 7}
                         className="py-8 px-4 text-center text-xs text-slate-500 dark:text-slate-400"
                       >
                         {t.emptyLeaderboard}
@@ -2238,13 +2969,13 @@ export default function App() {
                       const wr = calcWinrate(player.wins, player.losses);
                       return (
                         <tr
-                          key={player.id}
+                          key={`${player.id}-${player.ign}-${idx}`}
                           className="hover:bg-slate-50 dark:hover:bg-slate-800/30"
                         >
-                          <td className="py-2.5 px-1.5 sm:px-2 font-mono tabular-nums text-xs font-bold text-amber-600 dark:text-[#f1c40f]">
+                          <td className="py-2.5 px-1 sm:px-2 font-mono tabular-nums text-xs font-bold text-amber-600 dark:text-[#f1c40f]">
                             #{idx + 1}
                           </td>
-                          <td className="py-2.5 px-1.5 sm:px-2 font-bold text-slate-900 dark:text-white min-w-0">
+                          <td className="py-2.5 px-1 sm:px-2 font-bold text-slate-900 dark:text-white min-w-0">
                             <div className="truncate">{player.ign}</div>
                             <div className="sm:hidden mt-0.5 min-w-0">
                               <RoleBadge
@@ -2262,7 +2993,7 @@ export default function App() {
                           <td className="hidden sm:table-cell py-2.5 px-2.5 text-right font-mono tabular-nums text-xs text-slate-600 dark:text-slate-300">
                             {total}
                           </td>
-                          <td className="py-2.5 px-1.5 sm:px-2 text-right font-mono tabular-nums text-xs whitespace-nowrap">
+                          <td className="py-2.5 px-1 sm:px-2 text-right font-mono tabular-nums text-xs whitespace-nowrap">
                             <span className="text-emerald-600 dark:text-emerald-400">
                               {player.wins}W
                             </span>{' '}
@@ -2271,11 +3002,14 @@ export default function App() {
                               {player.losses}L
                             </span>
                           </td>
-                          <td className="py-2.5 px-1.5 sm:px-2 text-right font-mono tabular-nums font-bold text-xs text-cyan-700 dark:text-[#00f2fe] whitespace-nowrap">
+                          <td className="py-2.5 px-1 sm:px-2 text-right font-mono tabular-nums font-bold text-xs text-amber-600 dark:text-[#f1c40f] whitespace-nowrap">
+                            👑 {player.mvpCount || 0}
+                          </td>
+                          <td className="py-2.5 px-1 sm:px-2 text-right font-mono tabular-nums font-bold text-xs text-cyan-700 dark:text-[#00f2fe] whitespace-nowrap">
                             {wr.toFixed(1)}%
                           </td>
                           {isAdmin && (
-                            <td className="py-2.5 px-1.5 sm:px-2 text-right">
+                            <td className="py-2.5 px-1 sm:px-2 text-right">
                               <button
                                 type="button"
                                 onClick={() =>

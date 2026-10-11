@@ -114,16 +114,22 @@ export async function fetchFromSupabase() {
     : null;
 
   const mappedHistory: MatchHistoryRecord[] = (historyRes.data || []).map(
-    (h) => ({
-      id: h.match_code,
-      roomName: h.room_name,
-      completedAt: h.completed_at,
-      winner: (h.winner === 'Red' ? 'Red' : 'Blue') as 'Blue' | 'Red',
-      mvpIgn: h.mvp_ign,
-      teamBlue: JSON.parse(h.team_blue_json || '[]'),
-      teamRed: JSON.parse(h.team_red_json || '[]'),
-      durationText: 'Finished',
-    })
+    (h) => {
+      const [roomPart, scorePart] = String(h.room_name || '').split(' || ');
+      const [mvpPart, svpPart] = String(h.mvp_ign || '').split(' || ');
+      return {
+        id: h.match_code,
+        roomName: roomPart || h.room_name,
+        completedAt: h.completed_at,
+        winner: (h.winner === 'Red' ? 'Red' : 'Blue') as 'Blue' | 'Red',
+        mvpIgn: mvpPart || h.mvp_ign,
+        svpIgn: svpPart || undefined,
+        killScore: scorePart || undefined,
+        teamBlue: JSON.parse(h.team_blue_json || '[]'),
+        teamRed: JSON.parse(h.team_red_json || '[]'),
+        durationText: 'Finished',
+      };
+    }
   );
 
   return {
@@ -145,6 +151,39 @@ export async function deletePlayerFromSupabase(ign: string) {
 export async function clearAllPlayersFromSupabase() {
   if (!supabaseClient) return;
   await supabaseClient.from('players').delete().gte('id', 0);
+}
+
+export async function insertMatchHistoryToSupabase(record: MatchHistoryRecord) {
+  if (!supabaseClient) return;
+  const encodedRoom = record.killScore
+    ? `${record.roomName} || ${record.killScore}`
+    : record.roomName;
+  const encodedMvp = record.svpIgn
+    ? `${record.mvpIgn} || ${record.svpIgn}`
+    : record.mvpIgn;
+
+  await supabaseClient.from('match_history').insert({
+    match_code: record.id,
+    room_name: encodedRoom,
+    completed_at: record.completedAt,
+    winner: record.winner,
+    mvp_ign: encodedMvp,
+    team_blue_json: JSON.stringify(record.teamBlue),
+    team_red_json: JSON.stringify(record.teamRed),
+  });
+}
+
+export async function deleteMatchHistoryFromSupabase(matchCode: string) {
+  if (!supabaseClient) return;
+  await supabaseClient
+    .from('match_history')
+    .delete()
+    .eq('match_code', matchCode);
+}
+
+export async function clearMatchHistoryFromSupabase() {
+  if (!supabaseClient) return;
+  await supabaseClient.from('match_history').delete().gte('id', 0);
 }
 
 export async function syncToSupabase(payload: {

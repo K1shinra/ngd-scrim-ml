@@ -79,16 +79,19 @@ export async function ensureInitialSeedData() {
       })
       .onConflictDoNothing();
 
-    for (const h of INITIAL_MATCH_HISTORY) {
-      await db.insert(matchHistory).values({
-        matchCode: h.id,
-        roomName: h.roomName,
-        completedAt: h.completedAt,
-        winner: h.winner,
-        mvpIgn: h.mvpIgn,
-        teamBlueJson: JSON.stringify(h.teamBlue),
-        teamRedJson: JSON.stringify(h.teamRed),
-      });
+    const existingHistory = await db.select().from(matchHistory).limit(1);
+    if (existingHistory.length === 0) {
+      for (const h of INITIAL_MATCH_HISTORY) {
+        await db.insert(matchHistory).values({
+          matchCode: h.id,
+          roomName: h.roomName,
+          completedAt: h.completedAt,
+          winner: h.winner,
+          mvpIgn: h.mvpIgn,
+          teamBlueJson: JSON.stringify(h.teamBlue),
+          teamRedJson: JSON.stringify(h.teamRed),
+        });
+      }
     }
   } catch (error) {
     console.error('Database seed failed:', error);

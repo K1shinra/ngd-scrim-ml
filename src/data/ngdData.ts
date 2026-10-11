@@ -158,6 +158,8 @@ export interface MatchParticipant {
   roleLabel: string;
   assignedLane: MlbbRole;
   winrateSnapshot: number;
+  kda?: string;
+  rating?: string;
 }
 
 export interface LiveMatchState {
@@ -180,6 +182,8 @@ export interface MatchHistoryRecord {
   completedAt: string;
   winner: 'Blue' | 'Red';
   mvpIgn: string;
+  svpIgn?: string;
+  killScore?: string;
   teamBlue: MatchParticipant[];
   teamRed: MatchParticipant[];
   durationText: string;

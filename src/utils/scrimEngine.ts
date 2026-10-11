@@ -1,6 +1,7 @@
 import {
   CORE_FIVE_ROLES,
   LiveMatchState,
+  MatchHistoryRecord,
   MatchParticipant,
   MlbbRole,
   PlayerProfile,
@@ -505,6 +506,58 @@ export function formatGcText(
       );
     });
   }
+
+  return lines.join('\n');
+}
+
+export function formatBattleResultGcText(record: MatchHistoryRecord): string {
+  const lines: string[] = [];
+  const winEmoji = record.winner === 'Blue' ? '🔵' : '🔴';
+  const winTeamName =
+    record.winner === 'Blue' ? 'TEAM BLUE VICTORY' : 'TEAM RED VICTORY';
+
+  lines.push(`🏆 NGD SCRIM BATTLE RESULT (${record.id}) 🏆`);
+  lines.push(`${winEmoji} ${winTeamName} · ${record.completedAt}`);
+  if (record.killScore) {
+    lines.push(`⚔️ Kill Score: ${record.killScore}`);
+  }
+  lines.push(
+    `👑 Match MVP: ${record.mvpIgn}${
+      record.svpIgn ? ` | 🛡️ Defeat MVP: ${record.svpIgn}` : ''
+    }`
+  );
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━');
+  lines.push(
+    `🔵 TEAM BLUE ${record.winner === 'Blue' ? '(WINNER 🏆)' : ''}:`
+  );
+  record.teamBlue.forEach((p) => {
+    const isMvp = p.ign.toLowerCase() === record.mvpIgn.toLowerCase();
+    const isSvp =
+      record.svpIgn && p.ign.toLowerCase() === record.svpIgn.toLowerCase();
+    const tag = isMvp ? ' 👑MVP' : isSvp ? ' 🛡️SVP' : '';
+    const statPart = p.kda
+      ? ` — ${p.kda}${p.rating ? ` (${p.rating})` : ''}`
+      : '';
+    lines.push(
+      `• [${ROLE_META[p.assignedLane].gcLabel}] ${p.ign}${statPart}${tag}`
+    );
+  });
+  lines.push('');
+  lines.push(
+    `🔴 TEAM RED ${record.winner === 'Red' ? '(WINNER 🏆)' : ''}:`
+  );
+  record.teamRed.forEach((p) => {
+    const isMvp = p.ign.toLowerCase() === record.mvpIgn.toLowerCase();
+    const isSvp =
+      record.svpIgn && p.ign.toLowerCase() === record.svpIgn.toLowerCase();
+    const tag = isMvp ? ' 👑MVP' : isSvp ? ' 🛡️SVP' : '';
+    const statPart = p.kda
+      ? ` — ${p.kda}${p.rating ? ` (${p.rating})` : ''}`
+      : '';
+    lines.push(
+      `• [${ROLE_META[p.assignedLane].gcLabel}] ${p.ign}${statPart}${tag}`
+    );
+  });
 
   return lines.join('\n');
 }

@@ -8,6 +8,7 @@ import {
   getFullScrimState,
   saveFullScrimState,
 } from './src/db/scrimRepository.ts';
+import { analyzeMlbbScreenshot } from './src/server/screenshotAnalyzer.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,7 +17,30 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '15mb' }));
+
+  app.post('/api/scrim/analyze-screenshot', async (req, res) => {
+    try {
+      const { imageBase64, mimeType, knownIgns } = req.body || {};
+      if (!imageBase64 || typeof imageBase64 !== 'string') {
+        res.status(400).json({ error: 'Missing screenshot imageBase64 data.' });
+        return;
+      }
+      const result = await analyzeMlbbScreenshot({
+        imageBase64,
+        mimeType: mimeType || 'image/jpeg',
+        knownIgns: Array.isArray(knownIgns) ? knownIgns : [],
+      });
+      res.json(result);
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Failed to analyze MLBB screenshot';
+      console.error('Error in POST /api/scrim/analyze-screenshot:', error);
+      res.status(500).json({ error: message });
+    }
+  });
 
   app.get('/api/scrim/state', requireAuth, async (req: AuthRequest, res) => {
     try {
