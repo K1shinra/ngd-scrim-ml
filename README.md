@@ -1,11 +1,15 @@
-<div align="center">
+# NGD Scrim Management System
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+5v5 Mobile Legends: Bang Bang (MLBB) In-House Scrim Manager (`1–20 Player Slots`, `5v5 Team Shuffle & Auto-Balancer`, `Leaderboard`, and `English / Tagalog + Light / Dark / System Settings`).
 
-  <h1>Built with AI Studio</h2>
+## 📦 Included Database Files
+- `src/db/schema.ts` — Drizzle ORM PostgreSQL table definitions (`users`, `scrim_slots`, `players`, `scrim_matches`, `match_history`)
+- `src/db/index.ts` — PostgreSQL connection pool
+- `src/db/scrimRepository.ts` — Type-safe Drizzle queries for reading and saving 1–20 slots, 5v5 teams, and leaderboard stats
+- `supabase_schema.sql` — Ready-to-run SQL script for Supabase SQL Editor
 
-  <p>The fastest path from prompt to production with Gemini.</p>
-
-  <a href="https://aistudio.google.com/apps">Start building</a>
-
-</div>
+## 🚀 Local Development
+```bash
+npm install
+npm run dev
+```

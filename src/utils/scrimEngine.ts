@@ -1,0 +1,398 @@
+import {
+  CORE_FIVE_ROLES,
+  LiveMatchState,
+  MatchParticipant,
+  MlbbRole,
+  PlayerProfile,
+  QueuedPlayer,
+  ROLE_META,
+  ScrimSlot,
+  calcWinrate,
+  formatRolePairText,
+} from '../data/ngdData';
+
+export interface BalanceResult {
+  teamBlue: MatchParticipant[];
+  teamRed: MatchParticipant[];
+  blueAvgWr: number;
+  redAvgWr: number;
+  sourceSummary: string;
+}
+
+export function getPlayerWinrate(
+  ign: string,
+  players: PlayerProfile[],
+  defaultWr = 65.0
+): number {
+  const found = players.find(
+    (p) => p.ign.toLowerCase() === ign.trim().toLowerCase()
+  );
+  if (!found) return defaultWr;
+  const total = found.wins + found.losses;
+  if (total === 0) return defaultWr;
+  return calcWinrate(found.wins, found.losses);
+}
+
+interface CandidateEntry {
+  ign: string;
+  role: MlbbRole;
+  secondaryRole?: MlbbRole;
+  roleLabel: string;
+}
+
+export function autoBalance5v5(
+  poolSource: 'batch1' | 'batch2' | 'queue_and_slots',
+  slots: (ScrimSlot | null)[],
+  queue: QueuedPlayer[],
+  players: PlayerProfile[],
+  shuffleSeed = 0
+): BalanceResult {
+  const candidates: CandidateEntry[] = [];
+  const seenIgns = new Set<string>();
+
+  const pushUnique = (
+    ign: string,
+    role: MlbbRole,
+    secondaryRole?: MlbbRole,
+    roleLabel?: string
+  ) => {
+    const key = ign.trim().toLowerCase();
+    if (!key || seenIgns.has(key)) return;
+    seenIgns.add(key);
+    candidates.push({
+      ign: ign.trim(),
+      role,
+      secondaryRole,
+      roleLabel: roleLabel || formatRolePairText(role, secondaryRole),
+    });
+  };
+
+  if (poolSource === 'batch1') {
+    for (let i = 0; i < 10; i++) {
+      const s = slots[i];
+      if (s) pushUnique(s.ign, s.role, s.secondaryRole, s.roleLabel);
+    }
+  } else if (poolSource === 'batch2') {
+    for (let i = 10; i < 20; i++) {
+      const s = slots[i];
+      if (s) pushUnique(s.ign, s.role, s.secondaryRole, s.roleLabel);
+    }
+  }
+
+  // Supplement from remaining slots and active queue if under 10
+  for (const s of slots) {
+    if (candidates.length >= 10) break;
+    if (s) pushUnique(s.ign, s.role, s.secondaryRole, s.roleLabel);
+  }
+  for (const q of queue) {
+    if (candidates.length >= 10) break;
+    pushUnique(q.ign, q.role, q.secondaryRole, q.roleLabel);
+  }
+  for (const p of players) {
+    if (candidates.length >= 10) break;
+    pushUnique(p.ign, p.primaryRole, p.secondaryRole, p.roleLabel);
+  }
+
+  let top10 = candidates.slice(0, 10);
+
+  // Rotate candidate order on shuffleSeed > 1 so dual-role players can be assigned to their secondary lanes on re-rolls
+  if (shuffleSeed > 1) {
+    const offset = (shuffleSeed * 3) % top10.length;
+    top10 = [...top10.slice(offset), ...top10.slice(0, offset)];
+  }
+
+  const laneBuckets: Record<MlbbRole, CandidateEntry[]> = {
+    Jungle: [],
+    'EXP Lane': [],
+    'Mid Lane': [],
+    'Gold Lane': [],
+    Roamer: [],
+    'Flex Role': [],
+  };
+
+  const overflow: CandidateEntry[] = [];
+
+  for (const c of top10) {
+    // On odd shuffle seeds, if player has a valid secondary role, occasionally test their 2nd role first
+    const preferSecondary =
+      shuffleSeed > 1 &&
+      shuffleSeed % 2 === 1 &&
+      c.secondaryRole &&
+      c.secondaryRole !== 'Flex Role' &&
+      c.secondaryRole !== c.role &&
+      laneBuckets[c.secondaryRole].length < 2;
+
+    if (preferSecondary && c.secondaryRole) {
+      laneBuckets[c.secondaryRole].push(c);
+    } else if (c.role !== 'Flex Role' && laneBuckets[c.role].length < 2) {
+      laneBuckets[c.role].push(c);
+    } else {
+      overflow.push(c);
+    }
+  }
+
+  // Pass 2: assign overflow players using their secondaryRole
+  const remainingOverflow: CandidateEntry[] = [];
+  for (const c of overflow) {
+    const profile = players.find(
+      (p) => p.ign.toLowerCase() === c.ign.toLowerCase()
+    );
+    const secRole = c.secondaryRole || profile?.secondaryRole;
+    if (
+      secRole &&
+      secRole !== 'Flex Role' &&
+      laneBuckets[secRole].length < 2
+    ) {
+      laneBuckets[secRole].push(c);
+    } else if (c.role !== 'Flex Role' && laneBuckets[c.role].length < 2) {
+      laneBuckets[c.role].push(c);
+    } else {
+      remainingOverflow.push(c);
+    }
+  }
+
+  // Pass 3: fill any remaining open lane slots (e.g., with Multi / Flex Role players)
+  for (const c of remainingOverflow) {
+    const openLane = CORE_FIVE_ROLES.find((r) => laneBuckets[r].length < 2);
+    if (openLane) {
+      laneBuckets[openLane].push(c);
+    }
+  }
+
+  // Build 5 lane pairs in canonical order: Jungle, EXP Lane, Mid Lane, Gold Lane, Roamer
+  const lanePairs = CORE_FIVE_ROLES.map((lane) => {
+    const pair = laneBuckets[lane];
+    return pair.map((item) => ({
+      ign: item.ign,
+      selectedRole: item.role,
+      secondaryRole: item.secondaryRole,
+      roleLabel: item.roleLabel,
+      assignedLane: lane,
+      winrateSnapshot: getPlayerWinrate(item.ign, players),
+    }));
+  });
+
+  // Evaluate all 2^5 = 32 lane splits and rank them by Winrate fairness
+  const scoredMasks: { mask: number; diff: number }[] = [];
+  for (let mask = 0; mask < 32; mask++) {
+    let blueSum = 0;
+    let redSum = 0;
+    for (let i = 0; i < 5; i++) {
+      const pair = lanePairs[i];
+      if (pair.length === 2) {
+        const swap = ((mask >> i) & 1) === 1;
+        blueSum += swap ? pair[1].winrateSnapshot : pair[0].winrateSnapshot;
+        redSum += swap ? pair[0].winrateSnapshot : pair[1].winrateSnapshot;
+      }
+    }
+    scoredMasks.push({ mask, diff: Math.abs(blueSum - redSum) });
+  }
+
+  scoredMasks.sort((a, b) => a.diff - b.diff);
+
+  // Pick among the top most balanced splits using shuffleSeed so clicking "Shuffle" always gives a fresh balanced team
+  const topCandidatesCount = Math.min(6, scoredMasks.length);
+  const chosenIndex =
+    shuffleSeed <= 1 ? 0 : (shuffleSeed - 1) % topCandidatesCount;
+  const bestMask = scoredMasks[chosenIndex].mask;
+
+  const teamBlue: MatchParticipant[] = [];
+  const teamRed: MatchParticipant[] = [];
+
+  for (let i = 0; i < 5; i++) {
+    const pair = lanePairs[i];
+    if (pair.length === 2) {
+      const swap = ((bestMask >> i) & 1) === 1;
+      teamBlue.push(swap ? pair[1] : pair[0]);
+      teamRed.push(swap ? pair[0] : pair[1]);
+    } else if (pair.length === 1) {
+      teamBlue.push(pair[0]);
+    }
+  }
+
+  const blueAvgWr =
+    teamBlue.length > 0
+      ? Number(
+          (
+            teamBlue.reduce((acc, p) => acc + p.winrateSnapshot, 0) /
+            teamBlue.length
+          ).toFixed(1)
+        )
+      : 0;
+
+  const redAvgWr =
+    teamRed.length > 0
+      ? Number(
+          (
+            teamRed.reduce((acc, p) => acc + p.winrateSnapshot, 0) /
+            teamRed.length
+          ).toFixed(1)
+        )
+      : 0;
+
+  const sourceLabel =
+    poolSource === 'batch1'
+      ? 'Lobby 1 (Slots 1–10)'
+      : poolSource === 'batch2'
+        ? 'Lobby 2 (Slots 11–20)'
+        : 'All Ready Players';
+
+  return {
+    teamBlue,
+    teamRed,
+    blueAvgWr,
+    redAvgWr,
+    sourceSummary: `${sourceLabel} · Blue ${blueAvgWr}% WR vs Red ${redAvgWr}% WR`,
+  };
+}
+
+export function parseTraditionalGcText(
+  rawText: string
+): { slotNum: number; ign: string; role: MlbbRole; secondaryRole?: MlbbRole; roleLabel: string }[] {
+  const results: {
+    slotNum: number;
+    ign: string;
+    role: MlbbRole;
+    secondaryRole?: MlbbRole;
+    roleLabel: string;
+  }[] = [];
+
+  const detectRoleToken = (token: string): MlbbRole | null => {
+    const t = token.toLowerCase().trim();
+    if (t.includes('jung') || t.includes('jgl') || t.includes('core'))
+      return 'Jungle';
+    if (t.includes('exp')) return 'EXP Lane';
+    if (t.includes('mid') || t.includes('mage')) return 'Mid Lane';
+    if (t.includes('gold') || t.includes('mm')) return 'Gold Lane';
+    if (t.includes('roam') || t.includes('tank') || t.includes('supp'))
+      return 'Roamer';
+    if (t.includes('multi') || t.includes('flex') || t.includes('all'))
+      return 'Flex Role';
+    return null;
+  };
+
+  const lines = rawText.split(/\r?\n/);
+  for (const line of lines) {
+    const match = line.match(/^\s*(\d{1,2})\.\s*([^-–—:]+?)\s*[-–—:]\s*(.+)$/);
+    if (match) {
+      const slotNum = parseInt(match[1], 10);
+      const ign = match[2].trim();
+      const rawRoles = match[3].replace(/[✅⏳]/g, '').trim();
+      if (slotNum >= 1 && slotNum <= 20 && ign) {
+        const parts = rawRoles.split(/[\/,&]+/);
+        const primary = detectRoleToken(parts[0] || '') || 'Flex Role';
+        const secondary = parts[1] ? detectRoleToken(parts[1]) || undefined : undefined;
+        results.push({
+          slotNum,
+          ign,
+          role: primary,
+          secondaryRole: secondary,
+          roleLabel: formatRolePairText(primary, secondary),
+        });
+      }
+    }
+  }
+  return results;
+}
+
+export function formatGcText(
+  slots: (ScrimSlot | null)[],
+  queue: QueuedPlayer[],
+  liveMatch: LiveMatchState,
+  mode: 'warmup' | 'palist' | 'match' | 'full' = 'warmup'
+): string {
+  const lines: string[] = [];
+
+  if (mode === 'warmup') {
+    lines.push('Scrim warmup');
+    lines.push('');
+    for (let i = 0; i < 10; i++) {
+      const s = slots[i];
+      if (s) {
+        lines.push(`${i + 1}. ${s.ign} - ${s.roleLabel}`);
+      } else {
+        lines.push(`${i + 1}. `);
+      }
+    }
+    const batch2Filled = slots.slice(10, 20).some(Boolean);
+    if (batch2Filled) {
+      lines.push('');
+      lines.push('Batch 2 (Next Game):');
+      for (let i = 10; i < 20; i++) {
+        const s = slots[i];
+        if (s) {
+          lines.push(`${i + 1}. ${s.ign} - ${s.roleLabel}`);
+        } else {
+          lines.push(`${i + 1}. `);
+        }
+      }
+    }
+    return lines.join('\n');
+  }
+
+  const filledCount = slots.filter(Boolean).length;
+  lines.push('⚔️ NGD SCRIM WARMUP & 5v5 SYSTEM ⚔️');
+  lines.push('🏆 NextGen Dominator (Since 2019)');
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━');
+
+  if (mode === 'palist' || mode === 'full') {
+    lines.push(`📋 OFFICIAL 1–20 PLAYER LIST (${filledCount}/20 READY)`);
+    lines.push('');
+    lines.push('🔥 [LOBBY 1 · 5v5 FRIENDLY GAME (SLOTS 1–10)]');
+    for (let i = 0; i < 10; i++) {
+      const slot = slots[i];
+      if (slot) {
+        lines.push(
+          `${i + 1}. ${slot.ign} - ${slot.roleLabel} ${slot.isReady ? '✅' : '⏳'}`
+        );
+      } else {
+        lines.push(`${i + 1}. [OPEN SLOT — Tap to Join]`);
+      }
+    }
+
+    lines.push('');
+    lines.push('⚡ [LOBBY 2 · NEXT BATCH (SLOTS 11–20)]');
+    for (let i = 10; i < 20; i++) {
+      const slot = slots[i];
+      if (slot) {
+        lines.push(
+          `${i + 1}. ${slot.ign} - ${slot.roleLabel} ${slot.isReady ? '✅' : '⏳'}`
+        );
+      } else {
+        lines.push(`${i + 1}. [OPEN SLOT — Tap to Join]`);
+      }
+    }
+
+    if (queue.length > 0) {
+      lines.push('');
+      lines.push(`⏳ STANDBY QUEUE (${queue.length}):`);
+      queue.forEach((q, idx) => {
+        lines.push(`• Q${idx + 1}: ${q.ign} - ${q.roleLabel}`);
+      });
+    }
+  }
+
+  if (mode === 'match' || mode === 'full') {
+    if (mode === 'full') {
+      lines.push('━━━━━━━━━━━━━━━━━━━━━━');
+    }
+    lines.push(`🎮 SHUFFLED 5v5 MATCHUP: ${liveMatch.roomName}`);
+    lines.push(`👑 Host: ${liveMatch.hostIgn} | Format: ${liveMatch.seriesFormat}`);
+    lines.push('');
+    lines.push('🔵 TEAM BLUE (FIRST PICK):');
+    liveMatch.teamBlue.forEach((p) => {
+      lines.push(
+        `• [${ROLE_META[p.assignedLane].gcLabel}] ${p.ign} (${p.roleLabel})`
+      );
+    });
+    lines.push('');
+    lines.push('🔴 TEAM RED (SECOND PICK):');
+    liveMatch.teamRed.forEach((p) => {
+      lines.push(
+        `• [${ROLE_META[p.assignedLane].gcLabel}] ${p.ign} (${p.roleLabel})`
+      );
+    });
+  }
+
+  return lines.join('\n');
+}

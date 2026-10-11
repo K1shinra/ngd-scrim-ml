@@ -1,0 +1,6 @@
+{
+  "name": "NGD Scrim Management System",
+  "description": "5v5 Mobile Legends: Bang Bang (MLBB) in-house scrim queue, 20-slot palist manager, role auto-balancer, live match tracker, and player winrate leaderboard for NextGen Dominator.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
