@@ -1,4 +1,4 @@
-import { analyzeMlbbScreenshot } from '../../src/server/screenshotAnalyzer.ts';
+import { analyzeMlbbScreenshot } from '../../src/server/screenshotAnalyzer';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -9,16 +9,19 @@ export default async function handler(req: any, res: any) {
   try {
     const body =
       typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
-    const { imageBase64, mimeType, knownIgns } = body;
+    const { imageBase64, mimeType, images, knownIgns } = body;
 
-    if (!imageBase64 || typeof imageBase64 !== 'string') {
-      res.status(400).json({ error: 'Missing screenshot imageBase64 data.' });
+    const hasSingle = typeof imageBase64 === 'string' && imageBase64.length > 0;
+    const hasMulti = Array.isArray(images) && images.length > 0;
+    if (!hasSingle && !hasMulti) {
+      res.status(400).json({ error: 'Missing screenshot image data.' });
       return;
     }
 
     const result = await analyzeMlbbScreenshot({
-      imageBase64,
+      imageBase64: hasSingle ? imageBase64 : undefined,
       mimeType: mimeType || 'image/jpeg',
+      images: hasMulti ? images : undefined,
       knownIgns: Array.isArray(knownIgns) ? knownIgns : [],
     });
 

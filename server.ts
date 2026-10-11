@@ -1,17 +1,13 @@
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
-import { requireAuth, AuthRequest } from './src/middleware/auth.ts';
-import { getOrCreateUser } from './src/db/users.ts';
+import { requireAuth, AuthRequest } from './src/middleware/auth';
+import { getOrCreateUser } from './src/db/users';
 import {
   getFullScrimState,
   saveFullScrimState,
-} from './src/db/scrimRepository.ts';
-import { analyzeMlbbScreenshot } from './src/server/screenshotAnalyzer.ts';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+} from './src/db/scrimRepository';
+import { analyzeMlbbScreenshot } from './src/server/screenshotAnalyzer';
 
 async function startServer() {
   const app = express();
@@ -21,14 +17,17 @@ async function startServer() {
 
   app.post('/api/scrim/analyze-screenshot', async (req, res) => {
     try {
-      const { imageBase64, mimeType, knownIgns } = req.body || {};
-      if (!imageBase64 || typeof imageBase64 !== 'string') {
-        res.status(400).json({ error: 'Missing screenshot imageBase64 data.' });
+      const { imageBase64, mimeType, images, knownIgns } = req.body || {};
+      const hasSingle = typeof imageBase64 === 'string' && imageBase64.length > 0;
+      const hasMulti = Array.isArray(images) && images.length > 0;
+      if (!hasSingle && !hasMulti) {
+        res.status(400).json({ error: 'Missing screenshot image data.' });
         return;
       }
       const result = await analyzeMlbbScreenshot({
-        imageBase64,
+        imageBase64: hasSingle ? imageBase64 : undefined,
         mimeType: mimeType || 'image/jpeg',
+        images: hasMulti ? images : undefined,
         knownIgns: Array.isArray(knownIgns) ? knownIgns : [],
       });
       res.json(result);
@@ -94,7 +93,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, 'dist');
+    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

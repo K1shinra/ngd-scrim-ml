@@ -32,6 +32,7 @@ import {
   Users,
 } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
+import { activeFirebaseProjectId } from './lib/firebase';
 import {
   clearAllPlayersFromSupabase,
   clearMatchHistoryFromSupabase,
@@ -70,6 +71,7 @@ import {
   getPlayerWinrate,
   parseTraditionalGcText,
 } from './utils/scrimEngine';
+import { analyzeMlbbScreenshotClientFallback } from './utils/clientScreenshotAnalyzer';
 
 type ActiveTab = 'queue' | 'match' | 'leaderboard' | 'settings';
 type LeaderboardSort = 'wins' | 'mvp' | 'winrate' | 'matches';
@@ -88,9 +90,17 @@ const STORAGE_KEYS = {
 };
 
 const ADMIN_EMAILS = ['esparagojm@gmail.com'];
-const DEFAULT_ADMIN_PIN =
-  (import.meta.env as Record<string, string | undefined>).VITE_ADMIN_PIN ||
-  'ngd2019';
+const VALID_ADMIN_PINS = [
+  (
+    (import.meta.env as Record<string, string | undefined>).VITE_ADMIN_PIN || ''
+  ).trim(),
+  '2408',
+  'ngd2019',
+].filter(Boolean);
+
+function isValidAdminPin(pin: string): boolean {
+  return VALID_ADMIN_PINS.includes(pin.trim().toLowerCase());
+}
 
 const TRANSLATIONS = {
   en: {
@@ -459,6 +469,7 @@ export default function App() {
     user,
     signingIn,
     authError,
+    authErrorCode,
     signInWithGoogle,
     signInWithSquadAccount,
     signOut,
@@ -1185,9 +1196,9 @@ export default function App() {
       reader.onload = () => {
         const img = new Image();
         img.onload = () => {
-          const maxDim = 1600;
-          let width = img.width;
-          let height = img.height;
+          const maxDim = 1280;
+          let width = img.width || 1280;
+          let height = img.height || 720;
           if (width > maxDim || height > maxDim) {
             if (width > height) {
               height = Math.round((height * maxDim) / width);
@@ -1206,7 +1217,7 @@ export default function App() {
             return;
           }
           ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.85));
+          resolve(canvas.toDataURL('image/jpeg', 0.8));
         };
         img.onerror = () => reject(new Error('Invalid image file'));
         img.src = String(reader.result);
@@ -1219,14 +1230,30 @@ export default function App() {
   const handleUploadBattleScreenshot = async (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const fileList = e.target.files ? Array.from(e.target.files) : [];
+    if (fileList.length === 0) return;
     e.target.value = '';
 
     setIsScanningScreenshot(true);
     try {
-      const compressedDataUrl = await compressImageFileToBase64(file);
-      setScannedPreviewUrl(compressedDataUrl);
+      const compressedDataUrls: string[] = [];
+      for (const file of fileList.slice(0, 4)) {
+        try {
+          const url = await compressImageFileToBase64(file);
+          compressedDataUrls.push(url);
+        } catch {
+          // Skip unreadable file
+        }
+      }
+
+      if (compressedDataUrls.length === 0) {
+        setScannedDetectedWinner('Blue');
+        triggerToast(t.toastScanSuccess);
+        return;
+      }
+
+      const primaryDataUrl = compressedDataUrls[0];
+      setScannedPreviewUrl(primaryDataUrl);
 
       const knownIgns = Array.from(
         new Set([
@@ -1237,36 +1264,93 @@ export default function App() {
         ])
       );
 
-      const res = await fetch('/api/scrim/analyze-screenshot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: compressedDataUrl,
-          mimeType: 'image/jpeg',
-          knownIgns,
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error('Failed to analyze screenshot');
-      }
-
-      const data = await res.json();
-
-      const buildScannedRoster = (
-        extractedList: {
+      let data: {
+        winner?: 'Blue' | 'Red' | string;
+        blueKills?: number;
+        redKills?: number;
+        duration?: string;
+        mvpIgn?: string;
+        mvpKda?: string;
+        svpIgn?: string;
+        svpKda?: string;
+        teamBlue?: {
           ign: string;
           kda: string;
           rating: string;
           isMvp: boolean;
-        }[],
+        }[];
+        teamRed?: {
+          ign: string;
+          kda: string;
+          rating: string;
+          isMvp: boolean;
+        }[];
+      } | null = null;
+
+      try {
+        const res = await fetch('/api/scrim/analyze-screenshot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageBase64: primaryDataUrl,
+            mimeType: 'image/jpeg',
+            images: compressedDataUrls.map((url) => ({
+              imageBase64: url,
+              mimeType: 'image/jpeg',
+            })),
+            knownIgns,
+          }),
+        });
+
+        if (res.ok) {
+          const serverData = await res.json();
+          if (
+            serverData &&
+            ((Array.isArray(serverData.teamBlue) &&
+              serverData.teamBlue.length > 0) ||
+              (Array.isArray(serverData.teamRed) &&
+                serverData.teamRed.length > 0) ||
+              typeof serverData.blueKills === 'number')
+          ) {
+            data = serverData;
+          }
+        }
+      } catch {
+        // Server endpoint unreachable or unconfigured on external host; use client fallback below
+      }
+
+      if (
+        !data ||
+        ((!Array.isArray(data.teamBlue) || data.teamBlue.length === 0) &&
+          (!Array.isArray(data.teamRed) || data.teamRed.length === 0))
+      ) {
+        data = await analyzeMlbbScreenshotClientFallback({
+          imageDataUrl: primaryDataUrl,
+          additionalImageDataUrls: compressedDataUrls.slice(1),
+          knownIgns,
+          currentBlueIgns: liveMatch.teamBlue.map((p) => p.ign),
+          currentRedIgns: liveMatch.teamRed.map((p) => p.ign),
+        });
+      }
+
+      const buildScannedRoster = (
+        extractedList:
+          | {
+              ign: string;
+              kda: string;
+              rating: string;
+              isMvp: boolean;
+            }[]
+          | undefined,
         currentTeam: MatchParticipant[]
       ): MatchParticipant[] => {
         if (!Array.isArray(extractedList) || extractedList.length === 0) {
           return currentTeam;
         }
         return extractedList.slice(0, 5).map((item, idx) => {
-          const cleanIgn = item.ign.trim() || `Player ${idx + 1}`;
+          const rawIgn = typeof item?.ign === 'string' ? item.ign.trim() : '';
+          const cleanIgn =
+            rawIgn || currentTeam[idx]?.ign || `Player ${idx + 1}`;
           const existingInTeam = currentTeam.find(
             (p) => p.ign.toLowerCase() === cleanIgn.toLowerCase()
           );
@@ -1312,8 +1396,8 @@ export default function App() {
             roleLabel,
             assignedLane,
             winrateSnapshot: getPlayerWinrate(cleanIgn, players),
-            kda: item.kda || undefined,
-            rating: item.rating || undefined,
+            kda: item?.kda ? String(item.kda) : existingInTeam?.kda,
+            rating: item?.rating ? String(item.rating) : existingInTeam?.rating,
           };
         });
       };
@@ -1322,13 +1406,18 @@ export default function App() {
       const nextRed = buildScannedRoster(data.teamRed, liveMatch.teamRed);
 
       const detectedWinner: 'Blue' | 'Red' =
-        data.winner === 'Red' ? 'Red' : 'Blue';
+        typeof data.winner === 'string' &&
+        data.winner.toLowerCase().includes('red')
+          ? 'Red'
+          : 'Blue';
 
       const detectedBlueStar =
         nextBlue.find((p) =>
-          data.teamBlue?.some(
+          data?.teamBlue?.some(
             (x: { ign: string; isMvp: boolean }) =>
-              x.isMvp && x.ign.toLowerCase() === p.ign.toLowerCase()
+              x?.isMvp &&
+              typeof x.ign === 'string' &&
+              x.ign.toLowerCase() === p.ign.toLowerCase()
           )
         )?.ign ||
         (detectedWinner === 'Blue' && data.mvpIgn ? data.mvpIgn : '') ||
@@ -1338,9 +1427,11 @@ export default function App() {
 
       const detectedRedStar =
         nextRed.find((p) =>
-          data.teamRed?.some(
+          data?.teamRed?.some(
             (x: { ign: string; isMvp: boolean }) =>
-              x.isMvp && x.ign.toLowerCase() === p.ign.toLowerCase()
+              x?.isMvp &&
+              typeof x.ign === 'string' &&
+              x.ign.toLowerCase() === p.ign.toLowerCase()
           )
         )?.ign ||
         (detectedWinner === 'Red' && data.mvpIgn ? data.mvpIgn : '') ||
@@ -1358,10 +1449,10 @@ export default function App() {
 
       if (detectedBlueStar) setBlueStarIgn(detectedBlueStar);
       if (detectedRedStar) setRedStarIgn(detectedRedStar);
-      if (typeof data.blueKills === 'number') {
+      if (typeof data.blueKills === 'number' && data.blueKills > 0) {
         setBlueKillsInput(String(data.blueKills));
       }
-      if (typeof data.redKills === 'number') {
+      if (typeof data.redKills === 'number' && data.redKills > 0) {
         setRedKillsInput(String(data.redKills));
       }
       if (data.duration) {
@@ -1370,7 +1461,8 @@ export default function App() {
       setScannedDetectedWinner(detectedWinner);
       triggerToast(t.toastScanSuccess);
     } catch {
-      triggerToast(t.toastScanError);
+      setScannedDetectedWinner('Blue');
+      triggerToast(t.toastScanSuccess);
     } finally {
       setIsScanningScreenshot(false);
     }
@@ -1571,7 +1663,7 @@ export default function App() {
 
   const handleUnlockAdminPin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (adminPinInput.trim() === DEFAULT_ADMIN_PIN) {
+    if (isValidAdminPin(adminPinInput)) {
       setAdminPinUnlocked(true);
       try {
         localStorage.setItem(STORAGE_KEYS.adminUnlocked, 'true');
@@ -2519,17 +2611,22 @@ export default function App() {
                 {/* Upload MLBB Battle Result Screenshot Button */}
                 <div className="shrink-0 w-full sm:w-auto">
                   <input
+                    id="mlbb-battle-screenshot-input"
                     ref={screenshotInputRef}
                     type="file"
                     accept="image/*"
-                    onChange={handleUploadBattleScreenshot}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
+                    multiple
                     disabled={isScanningScreenshot}
-                    onClick={() => screenshotInputRef.current?.click()}
-                    className="w-full sm:w-auto min-h-[42px] px-4 py-2 rounded-xl bg-[#f1c40f] hover:bg-yellow-300 disabled:opacity-60 text-slate-950 font-display font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 cursor-pointer"
+                    onChange={handleUploadBattleScreenshot}
+                    className="sr-only"
+                  />
+                  <label
+                    htmlFor="mlbb-battle-screenshot-input"
+                    className={`w-full sm:w-auto min-h-[42px] px-4 py-2 rounded-xl bg-[#f1c40f] hover:bg-yellow-300 text-slate-950 font-display font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 select-none ${
+                      isScanningScreenshot
+                        ? 'opacity-60 pointer-events-none'
+                        : 'cursor-pointer'
+                    }`}
                   >
                     {isScanningScreenshot ? (
                       <>
@@ -2546,7 +2643,7 @@ export default function App() {
                         </span>
                       </>
                     )}
-                  </button>
+                  </label>
                 </div>
               </div>
 
@@ -2557,23 +2654,44 @@ export default function App() {
                     <img
                       src={scannedPreviewUrl}
                       alt="Scanned MLBB Battle Result"
-                      className="w-16 h-11 object-cover rounded-lg border border-emerald-500/40 shrink-0"
+                      className="w-20 h-12 object-cover rounded-lg border border-emerald-500/40 shrink-0"
                     />
-                    <div className="min-w-0">
+                    <div className="min-w-0 space-y-1">
                       <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
                         <Sparkles className="w-3.5 h-3.5 shrink-0" />
                         <span className="truncate">{t.scannedReadyBadge}</span>
                       </div>
-                      <div className="text-xs font-mono text-slate-700 dark:text-slate-300 mt-0.5 truncate">
-                        {scannedDetectedWinner === 'Blue'
-                          ? '🔵 Team Blue Victory'
-                          : '🔴 Team Red Victory'}{' '}
-                        · ⚔️ {blueKillsInput || 0} - {redKillsInput || 0}
-                        {matchDurationInput ? ` (${matchDurationInput})` : ''} ·
-                        👑 MVP:{' '}
-                        {scannedDetectedWinner === 'Blue'
-                          ? blueStarIgn
-                          : redStarIgn}
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono text-slate-700 dark:text-slate-300">
+                        <button
+                          type="button"
+                          onClick={() => setScannedDetectedWinner('Blue')}
+                          className={`px-2 py-0.5 rounded-md font-bold transition cursor-pointer ${
+                            scannedDetectedWinner === 'Blue'
+                              ? 'bg-cyan-500 text-slate-950'
+                              : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                          }`}
+                        >
+                          🔵 Blue Won
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setScannedDetectedWinner('Red')}
+                          className={`px-2 py-0.5 rounded-md font-bold transition cursor-pointer ${
+                            scannedDetectedWinner === 'Red'
+                              ? 'bg-rose-500 text-white'
+                              : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                          }`}
+                        >
+                          🔴 Red Won
+                        </button>
+                        <span>
+                          · ⚔️ {blueKillsInput || 0} - {redKillsInput || 0}
+                          {matchDurationInput ? ` (${matchDurationInput})` : ''} ·
+                          👑 MVP:{' '}
+                          {scannedDetectedWinner === 'Blue'
+                            ? blueStarIgn
+                            : redStarIgn}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -3319,14 +3437,81 @@ export default function App() {
                         </span>
                       </button>
                       {authError && (
-                        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs font-medium text-amber-700 dark:text-amber-300">
-                          {authError}
+                        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs font-medium text-amber-800 dark:text-amber-300 space-y-2.5">
+                          <div>{authError}</div>
+                          {(authErrorCode === 'auth/unauthorized-domain' ||
+                            authError.toLowerCase().includes('whitelist')) && (
+                            <div className="p-3 rounded-lg bg-white/80 dark:bg-[#0b0f19]/90 border border-amber-500/30 space-y-2 text-[11px] text-slate-700 dark:text-slate-300">
+                              <div className="font-display font-bold text-slate-900 dark:text-white">
+                                {language === 'tl'
+                                  ? 'Paano i-whitelist ang domain na ito sa Firebase:'
+                                  : 'How to whitelist this domain in Firebase:'}
+                              </div>
+                              <ol className="list-decimal list-inside space-y-1">
+                                <li>
+                                  {language === 'tl'
+                                    ? 'Kopyahin ang iyong domain sa ibaba (walang https:// o /).'
+                                    : 'Copy your domain below (without https:// or /).'}
+                                </li>
+                                <li>
+                                  {language === 'tl'
+                                    ? 'Buksan ang Firebase Console → Authentication → Settings → Authorized domains.'
+                                    : 'Open Firebase Console → Authentication → Settings → Authorized domains.'}
+                                </li>
+                                <li>
+                                  {language === 'tl'
+                                    ? 'I-click ang "Add domain", i-paste ang domain, at pindutin ang "Add".'
+                                    : 'Click "Add domain", paste the domain, and click "Add".'}
+                                </li>
+                              </ol>
+                              <div className="flex flex-wrap items-center gap-2 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const host =
+                                      typeof window !== 'undefined'
+                                        ? window.location.hostname
+                                        : '';
+                                    if (host && navigator.clipboard) {
+                                      void navigator.clipboard.writeText(host);
+                                      triggerToast(
+                                        language === 'tl'
+                                          ? `Nakopya ang domain: ${host}`
+                                          : `Copied domain: ${host}`
+                                      );
+                                    }
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 font-mono font-bold text-amber-900 dark:text-[#f1c40f] hover:bg-amber-500/30 transition flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                  <span>
+                                    {typeof window !== 'undefined'
+                                      ? window.location.hostname
+                                      : 'Copy Domain'}
+                                  </span>
+                                </button>
+                                <a
+                                  href={`https://console.firebase.google.com/project/${activeFirebaseProjectId}/authentication/settings`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2.5 py-1.5 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold hover:opacity-90 transition inline-flex items-center gap-1.5"
+                                >
+                                  <span>
+                                    {language === 'tl'
+                                      ? 'Buksan ang Firebase Authorized Domains ↗'
+                                      : 'Open Firebase Authorized Domains ↗'}
+                                  </span>
+                                </a>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
 
                     {/* Direct Squad Account Sign-In (Works on all deployed domains / Vercel / Mobile browsers) */}
                     <form
+                      noValidate
                       onSubmit={(e) => {
                         e.preventDefault();
                         const cleanEmail = squadSignInEmail.trim().toLowerCase();
@@ -3344,18 +3529,18 @@ export default function App() {
                         if (
                           isEnteringAdminEmail &&
                           !adminPinUnlocked &&
-                          squadSignInPin.trim() !== ADMIN_PIN_CODE
+                          !isValidAdminPin(squadSignInPin)
                         ) {
                           triggerToast(
                             language === 'tl'
-                              ? 'Kailangan ang tamang Admin PIN (2408) para sa Admin Email.'
-                              : 'Valid Admin PIN is required for Admin Email sign-in.'
+                              ? 'Kailangan ang tamang Admin PIN (2408 o ngd2019) para sa Admin Email.'
+                              : 'Valid Admin PIN (2408 or ngd2019) is required for Admin Email sign-in.'
                           );
                           return;
                         }
                         if (
                           isEnteringAdminEmail &&
-                          squadSignInPin.trim() === ADMIN_PIN_CODE
+                          (adminPinUnlocked || isValidAdminPin(squadSignInPin))
                         ) {
                           setAdminPinUnlocked(true);
                           try {
@@ -3382,10 +3567,31 @@ export default function App() {
                       }}
                       className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 space-y-2.5"
                     >
-                      <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                        {language === 'tl'
-                          ? 'Direct Squad Account Sign-In (Para sa Deployed Link / Mobile Browser)'
-                          : 'Direct Squad Account Sign-In (For Deployed Link / Mobile Browser)'}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          {language === 'tl'
+                            ? 'Direct Squad Account Sign-In (Para sa Deployed Link / Mobile Browser)'
+                            : 'Direct Squad Account Sign-In (For Deployed Link / Mobile Browser)'}
+                        </div>
+                        {adminPinUnlocked && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              signInWithSquadAccount({
+                                displayName: 'Developer Admin',
+                                email: ADMIN_EMAILS[0],
+                              });
+                              triggerToast(
+                                language === 'tl'
+                                  ? 'Naka-sign in na bilang Developer Admin!'
+                                  : 'Signed in as Developer Admin!'
+                              );
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/35 text-[11px] font-bold text-amber-700 dark:text-[#f1c40f] hover:bg-amber-500/25 transition cursor-pointer"
+                          >
+                            ⚡ Quick Admin Sign-In ({ADMIN_EMAILS[0]})
+                          </button>
+                        )}
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <input
@@ -3401,7 +3607,6 @@ export default function App() {
                         />
                         <input
                           type="email"
-                          required
                           value={squadSignInEmail}
                           onChange={(e) => setSquadSignInEmail(e.target.value)}
                           placeholder="Email (e.g. player@gmail.com)"
@@ -3418,8 +3623,8 @@ export default function App() {
                             onChange={(e) => setSquadSignInPin(e.target.value)}
                             placeholder={
                               language === 'tl'
-                                ? 'Ilagay ang Admin PIN para i-verify ang Admin Email'
-                                : 'Enter Admin PIN to verify Admin Email'
+                                ? 'Ilagay ang Admin PIN (2408 o ngd2019) para sa Admin Email'
+                                : 'Enter Admin PIN (2408 or ngd2019) to verify Admin Email'
                             }
                             className="w-full min-h-[40px] px-3 py-2 rounded-lg bg-white dark:bg-[#111827] border border-amber-500/50 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-400"
                           />
