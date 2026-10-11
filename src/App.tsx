@@ -2,25 +2,33 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftRight,
   ArrowUpRight,
-  Check,
+   Check,
   ClipboardPaste,
   Copy,
+  ListOrdered,
   LogIn,
   LogOut,
+  Lock,
   Monitor,
   Moon,
+  Play,
   RefreshCw,
   Search,
   Settings,
+  ShieldCheck,
   Shuffle,
   Sun,
   Swords,
+  Trash2,
   Trophy,
+  Unlock,
   UserPlus,
   Users,
 } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
 import {
+  clearAllPlayersFromSupabase,
+  deletePlayerFromSupabase,
   fetchFromSupabase,
   supabaseClient,
   syncToSupabase,
@@ -45,6 +53,7 @@ import {
 import { NgdBrandEmblem, RoleBadge, RoleIcon } from './components/NgdIcons';
 import {
   autoBalance5v5,
+  buildDirectLineup5v5,
   formatGcText,
   getPlayerWinrate,
   parseTraditionalGcText,
@@ -63,7 +72,13 @@ const STORAGE_KEYS = {
   history: 'ngd_scrim_history_v4',
   theme: 'ngd_scrim_theme_v1',
   lang: 'ngd_scrim_lang_v1',
+  adminUnlocked: 'ngd_scrim_admin_v1',
 };
+
+const ADMIN_EMAILS = ['esparagojm@gmail.com'];
+const DEFAULT_ADMIN_PIN =
+  (import.meta.env as Record<string, string | undefined>).VITE_ADMIN_PIN ||
+  'ngd2019';
 
 const TRANSLATIONS = {
   en: {
@@ -87,28 +102,38 @@ const TRANSLATIONS = {
     importBtn: 'Import Players',
     playerIgnLabel: 'Player IGN',
     playerIgnPlaceholder: 'Enter MLBB IGN (e.g., Estranghero, joshy)...',
-    mainRoleLabel: 'Main Role (Primary)',
-    secondRoleLabel: '2nd Role (Optional Sub-Role)',
-    noneOneRole: 'None (1 Role Only)',
+    mainRoleLabel: 'Main Role',
+    secondRoleLabel: '2nd Role (Optional)',
+    noneOneRole: 'None (1 Role)',
     joinSubmitBtn: 'Join Slot',
-    allSlotsTab: 'All Slots (1–20)',
+    allSlotsTab: 'All (1–20)',
     first10Tab: 'First 10',
     next10Tab: 'Next 10',
     game1Badge: 'GAME 1 · PLAYING NOW',
-    first10Title: 'First 10 Players (Slots 1–10)',
+    first10Title: 'First 10 Players (1–10)',
     game2Badge: 'GAME 2 · WAITING IN LINE',
-    next10Title: 'Next 10 Players (Slots 11–20)',
+    next10Title: 'Next 10 Players (11–20)',
     openSlotLabel: 'Open Slot',
-    joinSlotBtn: '+ Join Slot',
+    joinSlotBtn: '+ Join',
     inlineIgnPlaceholder: 'Enter IGN...',
     inlineMainPrefix: 'Main:',
     inlineSecondNone: '2nd Role: None',
     inlineSecondPrefix: '2nd Role:',
     inlineSaveBtn: 'Save',
     removeSlotTitle: 'Remove player from slot',
+    startNoShuffleBtn: 'Start Match (No Shuffle: 1–5 vs 6–10)',
+    keepOrderBtn: 'No Shuffle (1–5 vs 6–10)',
     shuffleFirst10Btn: 'Shuffle 5v5 Teams (Slots 1–10)',
     copyShortBtn: 'Copy List',
     promoteNext10Btn: 'Move Next 10 ➔ First 10 (Next Game)',
+    seriesFormatLabel: 'Match Format:',
+    formatBo1: '1 Game',
+    formatBo3: 'Best of 3',
+    formatBo5: 'Best of 5',
+    seriesScoreLabel: 'Series Score',
+    resetSeriesBtn: 'Reset Score',
+    slotTeamBlueHint: 'Slots 1–5 · Team Blue (if No Shuffle)',
+    slotTeamRedHint: 'Slots 6–10 · Team Red (if No Shuffle)',
     custom5v5Badge: 'CUSTOM 5V5 DRAFT ROOM',
     custom5v5Title: 'Team Blue vs Team Red',
     custom5v5Desc:
@@ -169,6 +194,24 @@ const TRANSLATIONS = {
     signInGoogleBtn: 'Sign in with Google',
     signOutBtn: 'Sign Out',
     signedInAs: 'Signed in as',
+    adminTitle: 'Developer / Admin Controls',
+    adminDesc:
+      'Only the developer/admin can delete players or clear the Leaderboard. Unlock with your Admin PIN or Developer Google account.',
+    adminUnlockedBadge: 'Developer Mode Active — You can delete players on the Leaderboard',
+    adminPinPlaceholder: 'Enter Developer / Admin PIN...',
+    adminUnlockBtn: 'Unlock Admin',
+    adminLockBtn: 'Lock Admin Mode',
+    adminWrongPin: 'Invalid Admin PIN.',
+    adminUnlockedToast: 'Developer Mode unlocked! Delete controls enabled on Leaderboard.',
+    adminLockedToast: 'Developer Mode locked.',
+    colAction: 'Action',
+    deletePlayerTitle: 'Delete player from Leaderboard',
+    clearLeaderboardBtn: 'Clear All Players',
+    confirmClearLeaderboardBtn: 'Confirm Delete All?',
+    restoreDefaultsBtn: 'Restore Sample Players',
+    emptyLeaderboard: 'No players on the Leaderboard yet. Finish a 5v5 match or add players to populate standings.',
+    toastPlayerDeleted: 'Removed player from Leaderboard.',
+    toastLeaderboardCleared: 'Cleared all players from Leaderboard.',
   },
   tl: {
     brandTitle: 'NGD Scrim System',
@@ -191,28 +234,38 @@ const TRANSLATIONS = {
     importBtn: 'I-import ang Listahan',
     playerIgnLabel: 'Pangalan sa MLBB (IGN)',
     playerIgnPlaceholder: 'I-type ang MLBB IGN (hal. Estranghero, joshy)...',
-    mainRoleLabel: 'Pangunahing Role (Main)',
-    secondRoleLabel: 'Pangalawang Role (2nd Role)',
-    noneOneRole: 'Wala (1 Role Lang)',
+    mainRoleLabel: 'Main Role (Pangunahin)',
+    secondRoleLabel: '2nd Role (Opsyonal)',
+    noneOneRole: 'Wala (1 Role)',
     joinSubmitBtn: 'Sumali sa Slot',
-    allSlotsTab: 'Lahat ng Slot (1–20)',
+    allSlotsTab: 'Lahat (1–20)',
     first10Tab: 'Unang 10',
-    next10Tab: 'Susunod na 10',
+    next10Tab: 'Sunod 10',
     game1Badge: 'UNANG LARO · MAGLALARO NGAYON',
-    first10Title: 'Unang 10 Manlalaro (Slots 1–10)',
-    game2Badge: 'PANGALAWANG LARO · SUSUNOD NA MAGLALARO',
-    next10Title: 'Susunod na 10 Manlalaro (Slots 11–20)',
-    openSlotLabel: 'Bakanteng Slot',
-    joinSlotBtn: '+ Sumali sa Slot',
+    first10Title: 'Unang 10 Manlalaro (1–10)',
+    game2Badge: 'IKALAWANG LARO · SUSUNOD NA Lalaro',
+    next10Title: 'Susunod na 10 Manlalaro (11–20)',
+    openSlotLabel: 'Bakante',
+    joinSlotBtn: '+ Sumali',
     inlineIgnPlaceholder: 'Ilagay ang IGN...',
     inlineMainPrefix: 'Main:',
     inlineSecondNone: '2nd Role: Wala',
     inlineSecondPrefix: '2nd Role:',
     inlineSaveBtn: 'I-save',
     removeSlotTitle: 'Alisin ang manlalaro sa slot',
+    startNoShuffleBtn: 'Simulan (Walang Shuffle: 1–5 vs 6–10)',
+    keepOrderBtn: 'Walang Shuffle (1–5 vs 6–10)',
     shuffleFirst10Btn: 'I-shuffle ang 5v5 Kampihan (1–10)',
     copyShortBtn: 'Kopyahin',
     promoteNext10Btn: 'Ilipat ang Susunod na 10 ➔ Unang 10',
+    seriesFormatLabel: 'Format ng Laro:',
+    formatBo1: '1 Game',
+    formatBo3: 'Best of 3',
+    formatBo5: 'Best of 5',
+    seriesScoreLabel: 'Series Score',
+    resetSeriesBtn: 'I-reset ang Score',
+    slotTeamBlueHint: 'Slots 1–5 · Team Blue (kapag Walang Shuffle)',
+    slotTeamRedHint: 'Slots 6–10 · Team Red (kapag Walang Shuffle)',
     custom5v5Badge: 'CUSTOM 5V5 KUWARTO NG LARO',
     custom5v5Title: 'Team Blue laban sa Team Red',
     custom5v5Desc:
@@ -274,6 +327,24 @@ const TRANSLATIONS = {
     signInGoogleBtn: 'Mag-Sign In gamit ang Google',
     signOutBtn: 'Mag-Sign Out',
     signedInAs: 'Naka-sign in bilang',
+    adminTitle: 'Developer / Admin Controls',
+    adminDesc:
+      'Ikaw lang bilang developer/admin ang pwedeng magbura ng players sa Leaderboard. Buksan gamit ang Admin PIN o Developer Google account.',
+    adminUnlockedBadge: 'Developer Mode Active — Pwede ka nang magbura sa Leaderboard',
+    adminPinPlaceholder: 'Ilagay ang Developer / Admin PIN...',
+    adminUnlockBtn: 'Buksan ang Admin',
+    adminLockBtn: 'I-lock ang Admin Mode',
+    adminWrongPin: 'Mali ang Admin PIN.',
+    adminUnlockedToast: 'Bukas na ang Developer Mode! Pwede ka nang magbura sa Leaderboard.',
+    adminLockedToast: 'Naka-lock na ulit ang Developer Mode.',
+    colAction: 'Aksyon',
+    deletePlayerTitle: 'Burahin ang manlalaro sa Leaderboard',
+    clearLeaderboardBtn: 'Burahin Lahat ng Players',
+    confirmClearLeaderboardBtn: 'Sigurado? Burahin Lahat',
+    restoreDefaultsBtn: 'Ibalik ang Sample Players',
+    emptyLeaderboard: 'Wala pang manlalaro sa Leaderboard. Magtapos ng 5v5 match para magka-record.',
+    toastPlayerDeleted: 'Nabura na ang manlalaro sa Leaderboard.',
+    toastLeaderboardCleared: 'Nabura na lahat ng manlalaro sa Leaderboard.',
   },
 };
 
@@ -347,6 +418,23 @@ export default function App() {
     }
   });
 
+  const [adminPinUnlocked, setAdminPinUnlocked] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEYS.adminUnlocked) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [adminPinInput, setAdminPinInput] = useState('');
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+
+  const isAdmin = useMemo(() => {
+    const emailMatch =
+      user?.email &&
+      ADMIN_EMAILS.includes(user.email.trim().toLowerCase());
+    return Boolean(emailMatch || adminPinUnlocked);
+  }, [user, adminPinUnlocked]);
+
   const t = TRANSLATIONS[language];
 
   // Apply Light / Dark / System class on <html>
@@ -376,10 +464,10 @@ export default function App() {
         const remote = await fetchFromSupabase();
         if (!remote || cancelled) return;
 
-        if (remote.hasPlayers) {
+        if (remote.hasPlayers || remote.liveMatch) {
           setPlayers(remote.players);
         }
-        if (remote.hasSlots || remote.hasPlayers) {
+        if (remote.hasSlots || remote.hasPlayers || remote.liveMatch) {
           setSlots(remote.slots);
         }
         if (remote.liveMatch) {
@@ -388,7 +476,7 @@ export default function App() {
         if (remote.hasHistory) {
           setMatchHistory(remote.matchHistory);
         }
-        if (!remote.hasPlayers && !remote.hasSlots) {
+        if (!remote.hasPlayers && !remote.hasSlots && !remote.liveMatch) {
           await syncToSupabase({
             players: INITIAL_PLAYERS,
             slots: INITIAL_SLOTS,
@@ -437,7 +525,7 @@ export default function App() {
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;
-        if (Array.isArray(data.players) && data.players.length > 0) {
+        if (Array.isArray(data.players)) {
           setPlayers(data.players);
         }
         if (Array.isArray(data.slots) && data.slots.length === 20) {
@@ -776,7 +864,55 @@ export default function App() {
     triggerToast(`Imported ${parsed.length} players!`);
   };
 
-  // --- SHUFFLE & AUTO-BALANCE 5v5 ---
+  // --- SHUFFLE, DIRECT LINEUP (NO SHUFFLE) & SERIES FORMAT ---
+
+  const handleSetSeriesFormat = (format: 'BO1' | 'BO3' | 'BO5') => {
+    setLiveMatch((prev) => ({
+      ...prev,
+      seriesFormat: format,
+      blueSeriesWins: 0,
+      redSeriesWins: 0,
+    }));
+  };
+
+  const handleResetSeriesScore = () => {
+    setLiveMatch((prev) => ({
+      ...prev,
+      blueSeriesWins: 0,
+      redSeriesWins: 0,
+    }));
+  };
+
+  const handleStartDirectLineup5v5 = (
+    poolSource: 'batch1' | 'batch2' = 'batch1',
+    goToMatchTab = true
+  ) => {
+    const direct = buildDirectLineup5v5(poolSource, slots, players);
+
+    setLiveMatch((prev) => ({
+      ...prev,
+      matchId: `CUSTOM-5V5-${String(matchHistory.length + 1).padStart(2, '0')}`,
+      roomName:
+        poolSource === 'batch1'
+          ? 'Custom 5v5 · Slot Order (Slots 1–5 vs 6–10)'
+          : 'Custom 5v5 · Slot Order (Slots 11–15 vs 16–20)',
+      startedAt: getCurrentTimeLabel(),
+      teamBlue: direct.teamBlue,
+      teamRed: direct.teamRed,
+      mvpIgn: direct.teamBlue[0]?.ign || 'joshy',
+      shuffleNote: direct.sourceSummary,
+      blueSeriesWins: 0,
+      redSeriesWins: 0,
+    }));
+
+    setSwapSelection(null);
+    if (goToMatchTab) {
+      setActiveTab('match');
+    }
+    triggerToast(
+      `Lineup Ready (No Shuffle): Slots 1–5 (Blue) vs Slots 6–10 (Red)`
+    );
+  };
 
   const handleShuffle5v5 = (
     poolSource: 'batch1' | 'batch2' = 'batch1',
@@ -808,6 +944,8 @@ export default function App() {
       shuffleNote: reRoll
         ? `Shuffled Option #${nextSeed} · Blue ${balanced.blueAvgWr}% vs Red ${balanced.redAvgWr}%`
         : `Balanced by Role & WR · Blue ${balanced.blueAvgWr}% vs Red ${balanced.redAvgWr}%`,
+      blueSeriesWins: goToMatchTab ? 0 : prev.blueSeriesWins || 0,
+      redSeriesWins: goToMatchTab ? 0 : prev.redSeriesWins || 0,
     }));
 
     setSwapSelection(null);
@@ -965,8 +1103,104 @@ export default function App() {
       durationText: 'Finished',
     };
 
+    const targetWins =
+      liveMatch.seriesFormat === 'BO5'
+        ? 3
+        : liveMatch.seriesFormat === 'BO3'
+          ? 2
+          : 1;
+
+    const prevBlue = liveMatch.blueSeriesWins || 0;
+    const prevRed = liveMatch.redSeriesWins || 0;
+    const seriesAlreadyOver = prevBlue >= targetWins || prevRed >= targetWins;
+
+    const nextBlueWins = seriesAlreadyOver
+      ? winner === 'Blue'
+        ? 1
+        : 0
+      : prevBlue + (winner === 'Blue' ? 1 : 0);
+    const nextRedWins = seriesAlreadyOver
+      ? winner === 'Red'
+        ? 1
+        : 0
+      : prevRed + (winner === 'Red' ? 1 : 0);
+
+    setLiveMatch((prev) => ({
+      ...prev,
+      blueSeriesWins: nextBlueWins,
+      redSeriesWins: nextRedWins,
+    }));
+
     setMatchHistory((prev) => [newRecord, ...prev]);
-    triggerToast(`Team ${winner} Won! Leaderboard updated.`);
+
+    if (targetWins === 1) {
+      triggerToast(`Team ${winner} Won! Leaderboard updated.`);
+    } else if (nextBlueWins >= targetWins || nextRedWins >= targetWins) {
+      triggerToast(
+        `🏆 Team ${winner} Won the ${liveMatch.seriesFormat} Series (${nextBlueWins}–${nextRedWins})! Leaderboard updated.`
+      );
+    } else {
+      triggerToast(
+        `Team ${winner} Won Game ${nextBlueWins + nextRedWins}! Series Score: Blue ${nextBlueWins}–${nextRedWins} Red`
+      );
+    }
+  };
+
+  // --- ADMIN / DEVELOPER LEADERBOARD DELETION HANDLERS ---
+
+  const handleUnlockAdminPin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (adminPinInput.trim() === DEFAULT_ADMIN_PIN) {
+      setAdminPinUnlocked(true);
+      try {
+        localStorage.setItem(STORAGE_KEYS.adminUnlocked, 'true');
+      } catch {
+        // Ignore storage error
+      }
+      setAdminPinInput('');
+      triggerToast(t.adminUnlockedToast);
+    } else {
+      triggerToast(t.adminWrongPin);
+    }
+  };
+
+  const handleLockAdmin = () => {
+    setAdminPinUnlocked(false);
+    setConfirmClearAll(false);
+    try {
+      localStorage.removeItem(STORAGE_KEYS.adminUnlocked);
+    } catch {
+      // Ignore storage error
+    }
+    triggerToast(t.adminLockedToast);
+  };
+
+  const handleDeleteLeaderboardPlayer = async (ignToDelete: string) => {
+    if (!isAdmin) return;
+    setPlayers((prev) =>
+      prev.filter((p) => p.ign.toLowerCase() !== ignToDelete.toLowerCase())
+    );
+    await deletePlayerFromSupabase(ignToDelete).catch(() => {});
+    triggerToast(`${t.toastPlayerDeleted} (${ignToDelete})`);
+  };
+
+  const handleClearAllLeaderboardPlayers = async () => {
+    if (!isAdmin) return;
+    if (!confirmClearAll) {
+      setConfirmClearAll(true);
+      return;
+    }
+    setPlayers([]);
+    setConfirmClearAll(false);
+    await clearAllPlayersFromSupabase().catch(() => {});
+    triggerToast(t.toastLeaderboardCleared);
+  };
+
+  const handleRestoreSamplePlayers = async () => {
+    if (!isAdmin) return;
+    setPlayers(INITIAL_PLAYERS);
+    setConfirmClearAll(false);
+    triggerToast(t.toastReset);
   };
 
   // --- COMPUTED VALUES ---
@@ -1030,69 +1264,77 @@ export default function App() {
       return (
         <div
           key={slotNum}
-          className="min-h-[48px] px-3.5 py-2 rounded-xl bg-slate-100/80 dark:bg-[#080c14] border border-dashed border-slate-300 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700 flex items-center justify-between gap-2 transition"
+          className="min-h-[48px] px-3 py-2 rounded-xl bg-slate-100/80 dark:bg-[#080c14] border border-dashed border-slate-300 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700 flex items-center justify-between gap-2 transition overflow-hidden"
         >
           {isEditing ? (
-            <div className="flex flex-wrap items-center gap-1.5 w-full">
-              <span className="font-mono tabular-nums text-xs font-bold text-slate-500 w-6">
-                {slotNum}.
-              </span>
-              <input
-                type="text"
-                value={inlineSlotIgn}
-                onChange={(e) => setInlineSlotIgn(e.target.value)}
-                placeholder={t.inlineIgnPlaceholder}
-                autoFocus
-                className="flex-1 min-w-[100px] h-9 px-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
-              />
-              <select
-                value={inlineSlotRole}
-                onChange={(e) => setInlineSlotRole(e.target.value as MlbbRole)}
-                className="h-9 px-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
-              >
-                {MLBB_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {t.inlineMainPrefix} {ROLE_META[r].gcLabel}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={inlineSlotSecRole}
-                onChange={(e) =>
-                  setInlineSlotSecRole(e.target.value as MlbbRole | 'NONE')
-                }
-                disabled={inlineSlotRole === 'Flex Role'}
-                className="h-9 px-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 disabled:opacity-40"
-              >
-                <option value="NONE">{t.inlineSecondNone}</option>
-                {MLBB_ROLES.filter((r) => r !== 'Flex Role').map((r) => (
-                  <option key={r} value={r}>
-                    {t.inlineSecondPrefix} {ROLE_META[r].gcLabel}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => handleSaveInlineSlot(slotIdx)}
-                className="h-9 px-3 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold text-xs cursor-pointer"
-              >
-                {t.inlineSaveBtn}
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditingSlotIndex(null)}
-                className="h-9 px-2.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs cursor-pointer"
-              >
-                ×
-              </button>
+            <div className="w-full min-w-0 space-y-2 py-1">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-mono tabular-nums text-xs font-bold text-slate-500 w-5 shrink-0">
+                  {slotNum}.
+                </span>
+                <input
+                  type="text"
+                  value={inlineSlotIgn}
+                  onChange={(e) => setInlineSlotIgn(e.target.value)}
+                  placeholder={t.inlineIgnPlaceholder}
+                  autoFocus
+                  className="flex-1 min-w-0 h-9 px-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 min-w-0">
+                <select
+                  value={inlineSlotRole}
+                  onChange={(e) =>
+                    setInlineSlotRole(e.target.value as MlbbRole)
+                  }
+                  className="w-full max-w-full min-w-0 h-9 px-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white truncate"
+                >
+                  {MLBB_ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {t.inlineMainPrefix} {ROLE_META[r].gcLabel}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={inlineSlotSecRole}
+                  onChange={(e) =>
+                    setInlineSlotSecRole(e.target.value as MlbbRole | 'NONE')
+                  }
+                  disabled={inlineSlotRole === 'Flex Role'}
+                  className="w-full max-w-full min-w-0 h-9 px-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 disabled:opacity-40 truncate"
+                >
+                  <option value="NONE">{t.inlineSecondNone}</option>
+                  {MLBB_ROLES.filter((r) => r !== 'Flex Role').map((r) => (
+                    <option key={r} value={r}>
+                      {t.inlineSecondPrefix} {ROLE_META[r].gcLabel}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setEditingSlotIndex(null)}
+                  className="min-h-[36px] px-3 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs cursor-pointer"
+                >
+                  {t.cancelBtn}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveInlineSlot(slotIdx)}
+                  className="min-h-[36px] px-3.5 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold text-xs cursor-pointer"
+                >
+                  {t.inlineSaveBtn}
+                </button>
+              </div>
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-2.5">
-                <span className="font-mono tabular-nums text-xs font-bold text-slate-500 w-6">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-mono tabular-nums text-xs font-bold text-slate-500 w-5 shrink-0">
                   {slotNum}.
                 </span>
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-slate-500 truncate">
                   {t.openSlotLabel}
                 </span>
               </div>
@@ -1100,7 +1342,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => handleJoinSpecificSlot(slotIdx)}
-                className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                className={`min-h-[36px] px-2.5 sm:px-3 py-1 rounded-lg text-xs font-bold transition whitespace-nowrap shrink-0 cursor-pointer ${
                   isFirst10
                     ? 'bg-cyan-500/15 text-cyan-700 dark:text-[#00f2fe] hover:bg-cyan-600 hover:text-white dark:hover:bg-[#00f2fe] dark:hover:text-slate-950'
                     : 'bg-amber-500/15 text-amber-700 dark:text-[#f1c40f] hover:bg-amber-500 hover:text-slate-950 dark:hover:bg-[#f1c40f]'
@@ -1117,11 +1359,11 @@ export default function App() {
     return (
       <div
         key={slotNum}
-        className="min-h-[48px] px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800/90 flex items-center justify-between gap-2"
+        className="min-h-[52px] px-3 py-2 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800/90 flex items-center justify-between gap-2 overflow-hidden"
       >
-        <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <span
-            className={`font-mono tabular-nums text-xs font-bold w-6 shrink-0 ${
+            className={`font-mono tabular-nums text-xs font-bold w-5 shrink-0 ${
               isFirst10
                 ? 'text-cyan-700 dark:text-[#00f2fe]'
                 : 'text-amber-700 dark:text-[#f1c40f]'
@@ -1129,18 +1371,19 @@ export default function App() {
           >
             {slotNum}.
           </span>
-          <span className="font-bold text-sm text-slate-900 dark:text-white truncate">
-            {slot.ign}
-          </span>
-          <span className="text-slate-400 dark:text-slate-600">-</span>
-          <RoleBadge role={slot.role} customLabel={slot.roleLabel} />
+          <div className="min-w-0 flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-0.5 sm:gap-2">
+            <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate min-w-0">
+              {slot.ign}
+            </span>
+            <RoleBadge role={slot.role} customLabel={slot.roleLabel} />
+          </div>
         </div>
 
         <button
           type="button"
           onClick={() => handleRemoveSlot(slotIdx)}
           title={t.removeSlotTitle}
-          className="h-7 w-7 rounded-lg bg-slate-200/70 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 flex items-center justify-center text-xs transition cursor-pointer shrink-0"
+          className="h-8 w-8 rounded-lg bg-slate-200/70 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 flex items-center justify-center text-sm transition cursor-pointer shrink-0"
         >
           ×
         </button>
@@ -1149,19 +1392,19 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-[#0b0f19] text-slate-900 dark:text-slate-100 flex flex-col pb-24 md:pb-12 transition-colors">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 dark:bg-[#0b0f19] text-slate-900 dark:text-slate-100 flex flex-col pb-24 md:pb-12 transition-colors">
       {/* TOP BAR CONTRACT: 3 Zones */}
-      <header className="sticky top-0 z-30 bg-white/95 dark:bg-[#0b0f19]/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 lg:px-10 h-16 flex items-center justify-between gap-8 transition-colors">
+      <header className="md:sticky md:top-0 z-30 w-full bg-white/95 dark:bg-[#0b0f19]/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-3 sm:px-6 lg:px-10 h-14 sm:h-16 flex items-center justify-between gap-2 sm:gap-8 transition-colors">
         <a
           href="#top"
           onClick={(e) => {
             e.preventDefault();
             setActiveTab('queue');
           }}
-          className="flex items-center gap-3 font-display text-lg font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0"
+          className="flex items-center gap-2 sm:gap-3 font-display text-sm sm:text-lg font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0 min-w-0"
         >
           <NgdBrandEmblem size="sm" />
-          <span>{t.brandTitle}</span>
+          <span className="truncate">{t.brandTitle}</span>
         </a>
 
         <nav className="hidden md:flex items-center gap-7 text-sm font-medium">
@@ -1211,44 +1454,23 @@ export default function App() {
           </button>
         </nav>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Quick EN / TL Language Switcher */}
-          <div className="flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={() => setLanguage('en')}
-              className={`px-2 py-1 rounded-md text-xs font-mono font-bold transition cursor-pointer ${
-                language === 'en'
-                  ? 'bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950'
-                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              EN
-            </button>
-            <button
-              type="button"
-              onClick={() => setLanguage('tl')}
-              className={`px-2 py-1 rounded-md text-xs font-mono font-bold transition cursor-pointer ${
-                language === 'tl'
-                  ? 'bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950'
-                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              TL
-            </button>
-          </div>
-
+        <div className="flex items-center shrink-0">
           <button
             type="button"
             onClick={() => handleCopyGcText('warmup')}
-            className="min-h-[40px] px-4 py-2 rounded-lg bg-[#f1c40f] text-slate-950 font-semibold text-xs hover:bg-yellow-300 transition whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer"
+            className="min-h-[38px] sm:min-h-[40px] px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-[#f1c40f] text-slate-950 font-semibold text-xs hover:bg-yellow-300 transition whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
           >
             {copiedFlag ? (
-              <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+              <Check className="w-3.5 h-3.5 stroke-[2.5] shrink-0" />
             ) : (
-              <Copy className="w-3.5 h-3.5" />
+              <Copy className="w-3.5 h-3.5 shrink-0" />
             )}
-            <span>{copiedFlag ? t.copied : t.copyGcList}</span>
+            <span className="sm:hidden">
+              {copiedFlag ? t.copied : t.copyShortBtn}
+            </span>
+            <span className="hidden sm:inline">
+              {copiedFlag ? t.copied : t.copyGcList}
+            </span>
           </button>
         </div>
       </header>
@@ -1258,40 +1480,40 @@ export default function App() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-20 md:bottom-6 right-4 md:right-8 z-50 max-w-md px-4 py-3 rounded-xl bg-white dark:bg-slate-900 border border-cyan-500/50 dark:border-[#00f2fe]/50 text-xs font-medium text-slate-900 dark:text-slate-100 shadow-2xl flex items-center gap-2.5"
+          className="fixed bottom-20 md:bottom-6 left-3 right-3 sm:left-auto sm:right-6 md:right-8 z-50 sm:max-w-md px-4 py-3 rounded-xl bg-white dark:bg-slate-900 border border-cyan-500/50 dark:border-[#00f2fe]/50 text-xs font-medium text-slate-900 dark:text-slate-100 shadow-2xl flex items-center gap-2.5"
         >
           <Check className="w-4 h-4 text-cyan-600 dark:text-[#00f2fe] shrink-0" />
-          <span>{toastMessage}</span>
+          <span className="min-w-0 break-words">{toastMessage}</span>
         </div>
       )}
 
       {/* Main Content */}
-      <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 py-5 space-y-6">
+      <main className="flex-1 w-full max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-5 space-y-5 sm:space-y-6 overflow-x-hidden">
         {/* =====================================================================
             TAB 1: 1–20 PALIST & CUSTOM 5V5 SLOTS
            ===================================================================== */}
         {activeTab === 'queue' && (
-          <div className="space-y-6">
+          <div className="space-y-5 sm:space-y-6">
             {/* SIMPLE PALIST FORM AT THE TOP */}
-            <section className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h1 className="text-lg font-display font-bold text-slate-900 dark:text-white">
+            <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs overflow-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h1 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white">
                     {t.joinTitle}
                   </h1>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                     {t.joinSubtitle}
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="grid grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto shrink-0">
                   <button
                     type="button"
                     onClick={() => setShowPasteBox((v) => !v)}
-                    className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-xs text-slate-700 dark:text-slate-300 flex items-center gap-1.5 cursor-pointer"
+                    className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-xs text-slate-700 dark:text-slate-300 flex items-center justify-center gap-1.5 min-w-0 cursor-pointer"
                   >
-                    <ClipboardPaste className="w-3.5 h-3.5 text-cyan-600 dark:text-[#00f2fe]" />
-                    <span>{t.pasteGcBtn}</span>
+                    <ClipboardPaste className="w-3.5 h-3.5 text-cyan-600 dark:text-[#00f2fe] shrink-0" />
+                    <span className="truncate">{t.pasteGcBtn}</span>
                   </button>
                   <button
                     type="button"
@@ -1299,16 +1521,16 @@ export default function App() {
                       setSlots(INITIAL_SLOTS);
                       triggerToast(t.toastReset);
                     }}
-                    className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1.5 cursor-pointer"
+                    className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center justify-center gap-1.5 min-w-0 cursor-pointer"
                   >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>{t.resetBtn}</span>
+                    <RefreshCw className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{t.resetBtn}</span>
                   </button>
                 </div>
               </div>
 
               {showPasteBox && (
-                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 space-y-2.5">
+                <div className="p-3 sm:p-3.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 space-y-2.5">
                   <textarea
                     value={pasteRawText}
                     onChange={(e) => setPasteRawText(e.target.value)}
@@ -1319,14 +1541,14 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setShowPasteBox(false)}
-                      className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 cursor-pointer"
+                      className="min-h-[36px] px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 cursor-pointer"
                     >
                       {t.cancelBtn}
                     </button>
                     <button
                       type="button"
                       onClick={handleImportGcText}
-                      className="px-3.5 py-1.5 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold text-xs cursor-pointer"
+                      className="min-h-[36px] px-3.5 py-1.5 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold text-xs cursor-pointer"
                     >
                       {t.importBtn}
                     </button>
@@ -1336,10 +1558,10 @@ export default function App() {
 
               <form
                 onSubmit={handleJoinPalist}
-                className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end"
+                className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end min-w-0"
               >
-                <div className="sm:col-span-4">
-                  <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                <div className="sm:col-span-4 min-w-0">
+                  <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1 truncate">
                     {t.playerIgnLabel}
                   </label>
                   <input
@@ -1347,13 +1569,13 @@ export default function App() {
                     value={palistIgn}
                     onChange={(e) => setPalistIgn(e.target.value)}
                     placeholder={t.playerIgnPlaceholder}
-                    className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
+                    className="w-full min-w-0 h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2.5 sm:col-span-5">
-                  <div>
-                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:col-span-5 min-w-0">
+                  <div className="min-w-0">
+                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1 truncate">
                       {t.mainRoleLabel}
                     </label>
                     <select
@@ -1362,7 +1584,7 @@ export default function App() {
                       onChange={(e) =>
                         setPalistRole(e.target.value as MlbbRole)
                       }
-                      className="w-full h-11 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
+                      className="w-full max-w-full min-w-0 h-11 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white truncate focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
                     >
                       {MLBB_ROLES.map((r) => (
                         <option key={r} value={r}>
@@ -1372,8 +1594,8 @@ export default function App() {
                     </select>
                   </div>
 
-                  <div>
-                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  <div className="min-w-0">
+                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1 truncate">
                       {t.secondRoleLabel}
                     </label>
                     <select
@@ -1385,7 +1607,7 @@ export default function App() {
                         )
                       }
                       disabled={palistRole === 'Flex Role'}
-                      className="w-full h-11 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 disabled:opacity-40 focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
+                      className="w-full max-w-full min-w-0 h-11 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 disabled:opacity-40 truncate focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
                     >
                       <option value="NONE">{t.noneOneRole}</option>
                       {MLBB_ROLES.filter((r) => r !== 'Flex Role').map((r) => (
@@ -1397,24 +1619,24 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="sm:col-span-3">
+                <div className="sm:col-span-3 min-w-0">
                   <button
                     type="submit"
                     className="w-full h-11 px-4 rounded-xl bg-[#f1c40f] text-slate-950 font-display font-bold text-sm hover:bg-yellow-300 transition flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
                   >
                     <UserPlus className="w-4 h-4 stroke-[2.3] shrink-0" />
-                    <span>{t.joinSubmitBtn}</span>
+                    <span className="truncate">{t.joinSubmitBtn}</span>
                   </button>
                 </div>
               </form>
             </section>
 
             {/* Mobile View Toggle (All 1-20 | First 10 | Next 10) */}
-            <div className="flex lg:hidden items-center gap-1.5 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
+            <div className="grid grid-cols-3 lg:hidden gap-1 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
               <button
                 type="button"
                 onClick={() => setMobileBatchView('both')}
-                className={`flex-1 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                className={`min-h-[40px] py-2 px-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition truncate cursor-pointer ${
                   mobileBatchView === 'both'
                     ? 'bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white'
                     : 'text-slate-500 dark:text-slate-400'
@@ -1425,7 +1647,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setMobileBatchView('first10')}
-                className={`flex-1 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                className={`min-h-[40px] py-2 px-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition truncate cursor-pointer ${
                   mobileBatchView === 'first10'
                     ? 'bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950'
                     : 'text-slate-500 dark:text-slate-400'
@@ -1436,7 +1658,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setMobileBatchView('next10')}
-                className={`flex-1 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                className={`min-h-[40px] py-2 px-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition truncate cursor-pointer ${
                   mobileBatchView === 'next10'
                     ? 'bg-[#f1c40f] text-slate-950'
                     : 'text-slate-500 dark:text-slate-400'
@@ -1447,47 +1669,100 @@ export default function App() {
             </div>
 
             {/* TWO ORGANIZED 10-PLAYER LISTS: FIRST 10 (PLAYING) & NEXT 10 (WAITING) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 items-start">
               {/* FIRST 10 PLAYERS (SLOTS 1–10) */}
               {(mobileBatchView === 'both' ||
                 mobileBatchView === 'first10') && (
-                <section className="p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-cyan-500/40 dark:border-[#00f2fe]/35 space-y-4 shadow-xs">
+                <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-cyan-500/40 dark:border-[#00f2fe]/35 space-y-3.5 sm:space-y-4 shadow-xs overflow-hidden">
                   <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
-                    <div>
-                      <span className="text-xs font-mono text-cyan-700 dark:text-[#00f2fe] font-bold">
+                    <div className="min-w-0">
+                      <span className="block text-[11px] sm:text-xs font-mono text-cyan-700 dark:text-[#00f2fe] font-bold truncate">
                         {t.game1Badge}
                       </span>
-                      <h2 className="text-lg font-display font-bold text-slate-900 dark:text-white">
+                      <h2 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white truncate">
                         {t.first10Title}
                       </h2>
                     </div>
-                    <span className="font-mono tabular-nums text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                    <span className="font-mono tabular-nums text-xs font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
                       {first10FilledCount}/10
                     </span>
                   </div>
 
                   <div className="space-y-2">
-                    {Array.from({ length: 10 }, (_, i) =>
+                    <div className="text-[11px] font-mono text-cyan-700 dark:text-[#00f2fe] font-semibold px-1">
+                      {t.slotTeamBlueHint}
+                    </div>
+                    {Array.from({ length: 5 }, (_, i) =>
                       renderSlotRow(i, true)
+                    )}
+                    <div className="pt-1.5 text-[11px] font-mono text-rose-600 dark:text-rose-400 font-semibold px-1">
+                      {t.slotTeamRedHint}
+                    </div>
+                    {Array.from({ length: 5 }, (_, i) =>
+                      renderSlotRow(i + 5, true)
                     )}
                   </div>
 
-                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleShuffle5v5('batch1', true, true)}
-                      className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs sm:text-sm hover:opacity-90 transition flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Shuffle className="w-4 h-4 stroke-[2.5]" />
-                      <span>{t.shuffleFirst10Btn}</span>
-                    </button>
+                  {/* Series Format Selector (1 Game / Best of 3 / Best of 5) */}
+                  <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
+                        {t.seriesFormatLabel}
+                      </span>
+                      <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 w-full sm:w-auto">
+                        {(
+                          [
+                            { id: 'BO1', label: t.formatBo1 },
+                            { id: 'BO3', label: t.formatBo3 },
+                            { id: 'BO5', label: t.formatBo5 },
+                          ] as const
+                        ).map((fmt) => (
+                          <button
+                            key={fmt.id}
+                            type="button"
+                            onClick={() => handleSetSeriesFormat(fmt.id)}
+                            className={`min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-bold transition truncate cursor-pointer ${
+                              liveMatch.seriesFormat === fmt.id
+                                ? 'bg-[#f1c40f] text-slate-950'
+                                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                          >
+                            {fmt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Choice 1: Start Match Without Shuffling (1-5 vs 6-10) OR Choice 2: Shuffle 5v5 Teams */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStartDirectLineup5v5('batch1', true)
+                        }
+                        className="w-full min-w-0 min-h-[44px] px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-xs sm:text-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Play className="w-4 h-4 fill-current shrink-0" />
+                        <span className="truncate">{t.startNoShuffleBtn}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleShuffle5v5('batch1', true, true)}
+                        className="w-full min-w-0 min-h-[44px] px-3 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs sm:text-sm hover:opacity-90 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Shuffle className="w-4 h-4 stroke-[2.5] shrink-0" />
+                        <span className="truncate">{t.shuffleFirst10Btn}</span>
+                      </button>
+                    </div>
+
                     <button
                       type="button"
                       onClick={() => handleCopyGcText('warmup')}
-                      className="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-cyan-600 dark:hover:border-[#00f2fe] flex items-center gap-1.5 cursor-pointer"
+                      className="w-full min-h-[40px] px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-cyan-600 dark:hover:border-[#00f2fe] flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>{t.copyShortBtn}</span>
+                      <Copy className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{t.copyGcList}</span>
                     </button>
                   </div>
                 </section>
@@ -1495,17 +1770,17 @@ export default function App() {
 
               {/* NEXT 10 PLAYERS (SLOTS 11–20) */}
               {(mobileBatchView === 'both' || mobileBatchView === 'next10') && (
-                <section className="p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-amber-500/45 dark:border-[#f1c40f]/35 space-y-4 shadow-xs">
+                <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-amber-500/45 dark:border-[#f1c40f]/35 space-y-3.5 sm:space-y-4 shadow-xs overflow-hidden">
                   <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
-                    <div>
-                      <span className="text-xs font-mono text-amber-700 dark:text-[#f1c40f] font-bold">
+                    <div className="min-w-0">
+                      <span className="block text-[11px] sm:text-xs font-mono text-amber-700 dark:text-[#f1c40f] font-bold truncate">
                         {t.game2Badge}
                       </span>
-                      <h2 className="text-lg font-display font-bold text-slate-900 dark:text-white">
+                      <h2 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white truncate">
                         {t.next10Title}
                       </h2>
                     </div>
-                    <span className="font-mono tabular-nums text-xs font-bold text-amber-700 dark:text-[#f1c40f]">
+                    <span className="font-mono tabular-nums text-xs font-bold text-amber-700 dark:text-[#f1c40f] shrink-0">
                       {next10FilledCount}/10
                     </span>
                   </div>
@@ -1516,14 +1791,14 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2">
+                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2">
                     <button
                       type="button"
                       onClick={handlePromoteNext10ToFirst10}
-                      className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-[#f1c40f] text-slate-950 font-display font-bold text-xs sm:text-sm hover:bg-yellow-300 transition flex items-center justify-center gap-2 cursor-pointer"
+                      className="w-full min-w-0 min-h-[44px] px-3 sm:px-4 py-2 rounded-xl bg-[#f1c40f] text-slate-950 font-display font-bold text-xs sm:text-sm hover:bg-yellow-300 transition flex items-center justify-center gap-2 cursor-pointer"
                     >
-                      <ArrowUpRight className="w-4 h-4 stroke-[2.5]" />
-                      <span>{t.promoteNext10Btn}</span>
+                      <ArrowUpRight className="w-4 h-4 stroke-[2.5] shrink-0" />
+                      <span className="truncate">{t.promoteNext10Btn}</span>
                     </button>
                   </div>
                 </section>
@@ -1536,56 +1811,125 @@ export default function App() {
             TAB 2: CUSTOM 5v5 SHUFFLE & MATCH ROOM
            ===================================================================== */}
         {activeTab === 'match' && (
-          <div className="space-y-6">
-            <section className="p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
-              <div>
-                <span className="text-xs font-mono text-cyan-700 dark:text-[#00f2fe] font-semibold">
-                  {t.custom5v5Badge}
-                </span>
-                <h2 className="text-xl font-display font-bold text-slate-900 dark:text-white">
-                  {t.custom5v5Title}
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  {t.custom5v5Desc}
-                </p>
+          <div className="space-y-5 sm:space-y-6">
+            <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs overflow-hidden">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <span className="text-xs font-mono text-cyan-700 dark:text-[#00f2fe] font-semibold">
+                    {t.custom5v5Badge}
+                  </span>
+                  <h2 className="text-lg sm:text-xl font-display font-bold text-slate-900 dark:text-white">
+                    {t.custom5v5Title}
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {t.custom5v5Desc}
+                  </p>
+                </div>
+
+                {/* Lineup Options: No Shuffle (1-5 vs 6-10) | Auto-Balance | Shuffle Again | Copy */}
+                <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full md:w-auto min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => handleStartDirectLineup5v5('batch1', false)}
+                    className="min-h-[42px] px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-xs flex items-center justify-center gap-1.5 min-w-0 cursor-pointer"
+                  >
+                    <ListOrdered className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{t.keepOrderBtn}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleShuffle5v5('batch1', false, false)}
+                    className="min-h-[42px] px-3.5 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs flex items-center justify-center gap-1.5 min-w-0 cursor-pointer"
+                  >
+                    <Shuffle className="w-4 h-4 stroke-[2.5] shrink-0" />
+                    <span className="truncate">{t.autoBalanceBtn}</span>
+                  </button>
+                  <div className="grid grid-cols-2 sm:flex items-center gap-2 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => handleShuffle5v5('batch1', true, false)}
+                      className="min-h-[42px] px-2.5 sm:px-3.5 py-2 rounded-xl bg-[#f1c40f] text-slate-950 font-display font-bold text-xs flex items-center justify-center gap-1.5 min-w-0 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 stroke-[2.5] shrink-0" />
+                      <span className="truncate">{t.shuffleAgainBtn}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyGcText('match')}
+                      className="min-h-[42px] px-2.5 sm:px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-1.5 min-w-0 cursor-pointer"
+                    >
+                      <Copy className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{t.copy5v5Btn}</span>
+                    </button>
+                  </div>
+                </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => handleShuffle5v5('batch1', false, false)}
-                  className="min-h-[42px] px-4 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Shuffle className="w-4 h-4 stroke-[2.5]" />
-                  <span>{t.autoBalanceBtn}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleShuffle5v5('batch1', true, false)}
-                  className="min-h-[42px] px-4 py-2 rounded-xl bg-[#f1c40f] text-slate-950 font-display font-bold text-xs flex items-center gap-1.5 cursor-pointer"
-                >
-                  <RefreshCw className="w-4 h-4 stroke-[2.5]" />
-                  <span>{t.shuffleAgainBtn}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleCopyGcText('match')}
-                  className="min-h-[42px] px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>{t.copy5v5Btn}</span>
-                </button>
+              {/* Series Format (1 Game / Best of 3 / Best of 5) & Series Scoreboard */}
+              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                    {t.seriesFormatLabel}
+                  </span>
+                  <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 w-full sm:w-auto">
+                    {(
+                      [
+                        { id: 'BO1', label: t.formatBo1 },
+                        { id: 'BO3', label: t.formatBo3 },
+                        { id: 'BO5', label: t.formatBo5 },
+                      ] as const
+                    ).map((fmt) => (
+                      <button
+                        key={fmt.id}
+                        type="button"
+                        onClick={() => handleSetSeriesFormat(fmt.id)}
+                        className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-bold transition truncate cursor-pointer ${
+                          liveMatch.seriesFormat === fmt.id
+                            ? 'bg-[#f1c40f] text-slate-950'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                      >
+                        {fmt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between sm:justify-end gap-3 px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center gap-2.5 font-mono tabular-nums text-xs sm:text-sm font-bold">
+                    <span className="text-slate-500 dark:text-slate-400 font-sans font-medium text-xs">
+                      {t.seriesScoreLabel}:
+                    </span>
+                    <span className="text-cyan-700 dark:text-[#00f2fe]">
+                      Blue {liveMatch.blueSeriesWins || 0}
+                    </span>
+                    <span className="text-slate-400">-</span>
+                    <span className="text-rose-600 dark:text-rose-400">
+                      {liveMatch.redSeriesWins || 0} Red
+                    </span>
+                  </div>
+                  {((liveMatch.blueSeriesWins || 0) > 0 ||
+                    (liveMatch.redSeriesWins || 0) > 0) && (
+                    <button
+                      type="button"
+                      onClick={handleResetSeriesScore}
+                      className="px-2 py-1 rounded-md bg-slate-200 dark:bg-slate-800 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                    >
+                      {t.resetSeriesBtn}
+                    </button>
+                  )}
+                </div>
               </div>
             </section>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
               {/* TEAM BLUE */}
-              <section className="p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-cyan-500/40 dark:border-[#00f2fe]/35 space-y-3.5 shadow-xs">
-                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-                  <h3 className="text-lg font-display font-bold text-cyan-700 dark:text-[#00f2fe]">
+              <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-cyan-500/40 dark:border-[#00f2fe]/35 space-y-3.5 shadow-xs overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-3">
+                  <h3 className="text-base sm:text-lg font-display font-bold text-cyan-700 dark:text-[#00f2fe] truncate">
                     {t.teamBlueTitle}
                   </h3>
-                  <span className="font-mono tabular-nums text-xs text-slate-500 dark:text-slate-400">
+                  <span className="font-mono tabular-nums text-xs text-slate-500 dark:text-slate-400 shrink-0">
                     {t.avgWrLabel}: {blueTeamAvgWr.toFixed(1)}%
                   </span>
                 </div>
@@ -1598,30 +1942,30 @@ export default function App() {
                     return (
                       <div
                         key={idx}
-                        className={`p-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border flex items-center justify-between gap-3 ${
+                        className={`p-2.5 sm:p-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border flex items-center justify-between gap-2 overflow-hidden ${
                           isSwapping
                             ? 'border-cyan-600 dark:border-[#00f2fe] ring-1 ring-cyan-600 dark:ring-[#00f2fe]'
                             : 'border-slate-200 dark:border-slate-800'
                         }`}
                       >
-                        <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
                           <div
-                            className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${ROLE_META[member.assignedLane].bgSubtleClass} ${ROLE_META[member.assignedLane].borderClass} ${ROLE_META[member.assignedLane].textClass}`}
+                            className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg border flex items-center justify-center shrink-0 ${ROLE_META[member.assignedLane].bgSubtleClass} ${ROLE_META[member.assignedLane].borderClass} ${ROLE_META[member.assignedLane].textClass}`}
                           >
                             <RoleIcon
                               role={member.assignedLane}
                               className="w-4 h-4"
                             />
                           </div>
-                          <div className="min-w-0">
-                            <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
                               {member.ign}{' '}
-                              <span className="text-xs font-mono font-normal text-slate-500 dark:text-slate-400">
+                              <span className="text-[11px] font-mono font-normal text-slate-500 dark:text-slate-400">
                                 ({member.roleLabel})
                               </span>
                             </div>
                             <div
-                              className={`text-xs font-mono ${ROLE_META[member.assignedLane].textClass}`}
+                              className={`text-[11px] sm:text-xs font-mono truncate ${ROLE_META[member.assignedLane].textClass}`}
                             >
                               {t.assignedLabel}:{' '}
                               {ROLE_META[member.assignedLane].gcLabel}
@@ -1632,14 +1976,14 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => handleSwapParticipant('Blue', idx)}
-                          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer ${
+                          className={`min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 shrink-0 max-w-[125px] sm:max-w-none cursor-pointer ${
                             isSwapping
                               ? 'bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold'
                               : 'bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-slate-700 dark:text-slate-300'
                           }`}
                         >
-                          <ArrowLeftRight className="w-3 h-3" />
-                          <span>
+                          <ArrowLeftRight className="w-3 h-3 shrink-0" />
+                          <span className="truncate">
                             {isSwapping ? t.selectTargetBtn : t.swapBtn}
                           </span>
                         </button>
@@ -1650,12 +1994,12 @@ export default function App() {
               </section>
 
               {/* TEAM RED */}
-              <section className="p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-rose-500/40 dark:border-rose-500/35 space-y-3.5 shadow-xs">
-                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-                  <h3 className="text-lg font-display font-bold text-rose-600 dark:text-rose-400">
+              <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-rose-500/40 dark:border-rose-500/35 space-y-3.5 shadow-xs overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-3">
+                  <h3 className="text-base sm:text-lg font-display font-bold text-rose-600 dark:text-rose-400 truncate">
                     {t.teamRedTitle}
                   </h3>
-                  <span className="font-mono tabular-nums text-xs text-slate-500 dark:text-slate-400">
+                  <span className="font-mono tabular-nums text-xs text-slate-500 dark:text-slate-400 shrink-0">
                     {t.avgWrLabel}: {redTeamAvgWr.toFixed(1)}%
                   </span>
                 </div>
@@ -1668,30 +2012,30 @@ export default function App() {
                     return (
                       <div
                         key={idx}
-                        className={`p-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border flex items-center justify-between gap-3 ${
+                        className={`p-2.5 sm:p-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border flex items-center justify-between gap-2 overflow-hidden ${
                           isSwapping
                             ? 'border-rose-500 ring-1 ring-rose-500'
                             : 'border-slate-200 dark:border-slate-800'
                         }`}
                       >
-                        <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
                           <div
-                            className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${ROLE_META[member.assignedLane].bgSubtleClass} ${ROLE_META[member.assignedLane].borderClass} ${ROLE_META[member.assignedLane].textClass}`}
+                            className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg border flex items-center justify-center shrink-0 ${ROLE_META[member.assignedLane].bgSubtleClass} ${ROLE_META[member.assignedLane].borderClass} ${ROLE_META[member.assignedLane].textClass}`}
                           >
                             <RoleIcon
                               role={member.assignedLane}
                               className="w-4 h-4"
                             />
                           </div>
-                          <div className="min-w-0">
-                            <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
                               {member.ign}{' '}
-                              <span className="text-xs font-mono font-normal text-slate-500 dark:text-slate-400">
+                              <span className="text-[11px] font-mono font-normal text-slate-500 dark:text-slate-400">
                                 ({member.roleLabel})
                               </span>
                             </div>
                             <div
-                              className={`text-xs font-mono ${ROLE_META[member.assignedLane].textClass}`}
+                              className={`text-[11px] sm:text-xs font-mono truncate ${ROLE_META[member.assignedLane].textClass}`}
                             >
                               {t.assignedLabel}:{' '}
                               {ROLE_META[member.assignedLane].gcLabel}
@@ -1702,14 +2046,14 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => handleSwapParticipant('Red', idx)}
-                          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer ${
+                          className={`min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 shrink-0 max-w-[125px] sm:max-w-none cursor-pointer ${
                             isSwapping
                               ? 'bg-rose-500 text-white font-bold'
                               : 'bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-slate-700 dark:text-slate-300'
                           }`}
                         >
-                          <ArrowLeftRight className="w-3 h-3" />
-                          <span>
+                          <ArrowLeftRight className="w-3 h-3 shrink-0" />
+                          <span className="truncate">
                             {isSwapping ? t.selectTargetBtn : t.swapBtn}
                           </span>
                         </button>
@@ -1721,8 +2065,8 @@ export default function App() {
             </div>
 
             {/* Record Winner */}
-            <section className="p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
-              <div>
+            <section className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs overflow-hidden">
+              <div className="min-w-0">
                 <h3 className="text-base font-display font-bold text-slate-900 dark:text-white">
                   {t.finishMatchTitle}
                 </h3>
@@ -1731,18 +2075,18 @@ export default function App() {
                 </p>
               </div>
 
-              <div className="flex items-center gap-3 w-full sm:w-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full sm:w-auto shrink-0">
                 <button
                   type="button"
                   onClick={() => handleFinishMatch('Blue')}
-                  className="flex-1 sm:flex-initial min-h-[44px] px-5 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs sm:text-sm cursor-pointer"
+                  className="min-h-[44px] px-4 sm:px-5 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs sm:text-sm truncate cursor-pointer"
                 >
                   {t.blueWonBtn}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleFinishMatch('Red')}
-                  className="flex-1 sm:flex-initial min-h-[44px] px-5 py-2 rounded-xl bg-rose-500 text-white font-display font-bold text-xs sm:text-sm cursor-pointer"
+                  className="min-h-[44px] px-4 sm:px-5 py-2 rounded-xl bg-rose-500 text-white font-display font-bold text-xs sm:text-sm truncate cursor-pointer"
                 >
                   {t.redWonBtn}
                 </button>
@@ -1755,9 +2099,9 @@ export default function App() {
             TAB 3: LEADERBOARD STANDINGS
            ===================================================================== */}
         {activeTab === 'leaderboard' && (
-          <section className="p-5 sm:p-6 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs">
+          <section className="p-3.5 sm:p-6 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs overflow-hidden">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
-              <div>
+              <div className="min-w-0">
                 <h2 className="text-lg font-display font-bold text-slate-900 dark:text-white">
                   {t.leaderboardTitle}
                 </h2>
@@ -1766,19 +2110,19 @@ export default function App() {
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                <div className="relative">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto min-w-0">
+                <div className="relative w-full sm:w-48 min-w-0">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder={t.searchIgnPlaceholder}
-                    className="h-9 pl-8 pr-3 rounded-lg bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
+                    className="w-full h-10 sm:h-9 pl-8 pr-3 rounded-lg bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
                   />
                 </div>
 
-                <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 rounded-lg">
+                <div className="grid grid-cols-3 sm:flex items-center gap-1 p-1 bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 rounded-lg min-w-0">
                   {(
                     [
                       { id: 'wins', label: t.sortWins },
@@ -1790,7 +2134,7 @@ export default function App() {
                       key={s.id}
                       type="button"
                       onClick={() => setLeaderboardSort(s.id)}
-                      className={`px-2.5 py-1 rounded text-xs font-medium cursor-pointer ${
+                      className={`min-h-[34px] sm:min-h-0 px-2 sm:px-2.5 py-1.5 sm:py-1 rounded text-xs font-medium text-center truncate cursor-pointer ${
                         leaderboardSort === s.id
                           ? 'bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold'
                           : 'text-slate-500 dark:text-slate-400'
@@ -1803,57 +2147,151 @@ export default function App() {
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+            {/* Developer / Admin Leaderboard Toolbar (Hidden from regular users) */}
+            {isAdmin && (
+              <div className="p-3 rounded-xl bg-amber-500/10 dark:bg-[#f1c40f]/10 border border-amber-500/30 dark:border-[#f1c40f]/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2 text-xs font-medium text-amber-800 dark:text-[#f1c40f] min-w-0">
+                  <ShieldCheck className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{t.adminUnlockedBadge}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  {players.length === 0 ? (
+                    <button
+                      type="button"
+                      onClick={handleRestoreSamplePlayers}
+                      className="min-h-[36px] px-3 py-1.5 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                      <span>{t.restoreDefaultsBtn}</span>
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleClearAllLeaderboardPlayers}
+                        className={`min-h-[36px] px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                          confirmClearAll
+                            ? 'bg-rose-600 text-white'
+                            : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white'
+                        }`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>
+                          {confirmClearAll
+                            ? t.confirmClearLeaderboardBtn
+                            : t.clearLeaderboardBtn}
+                        </span>
+                      </button>
+                      {confirmClearAll && (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmClearAll(false)}
+                          className="min-h-[36px] px-2.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 cursor-pointer"
+                        >
+                          {t.cancelBtn}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="w-full overflow-x-auto">
+              <table className="w-full table-fixed sm:table-auto text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 text-xs font-mono text-slate-500 dark:text-slate-400">
-                    <th className="py-3 px-2.5">#</th>
-                    <th className="py-3 px-2.5">{t.colPlayer}</th>
-                    <th className="py-3 px-2.5">{t.colRole}</th>
-                    <th className="py-3 px-2.5 text-right">{t.colGames}</th>
-                    <th className="py-3 px-2.5 text-right">{t.colWL}</th>
-                    <th className="py-3 px-2.5 text-right">{t.colWinrate}</th>
+                  <tr className="border-b border-slate-200 dark:border-slate-800 text-[11px] sm:text-xs font-mono text-slate-500 dark:text-slate-400">
+                    <th className="py-2.5 px-1.5 sm:px-2 w-8">#</th>
+                    <th className="py-2.5 px-1.5 sm:px-2">{t.colPlayer}</th>
+                    <th className="hidden sm:table-cell py-2.5 px-2.5">
+                      {t.colRole}
+                    </th>
+                    <th className="hidden sm:table-cell py-2.5 px-2.5 text-right">
+                      {t.colGames}
+                    </th>
+                    <th className="py-2.5 px-1.5 sm:px-2 text-right whitespace-nowrap w-22 sm:w-auto">
+                      {t.colWL}
+                    </th>
+                    <th className="py-2.5 px-1.5 sm:px-2 text-right whitespace-nowrap w-16 sm:w-auto">
+                      {t.colWinrate}
+                    </th>
+                    {isAdmin && (
+                      <th className="py-2.5 px-1.5 sm:px-2 text-right w-10 sm:w-14">
+                        {t.colAction}
+                      </th>
+                    )}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200/70 dark:divide-slate-800/70 text-sm">
-                  {sortedLeaderboard.map((player, idx) => {
-                    const total = player.wins + player.losses;
-                    const wr = calcWinrate(player.wins, player.losses);
-                    return (
-                      <tr
-                        key={player.id}
-                        className="hover:bg-slate-50 dark:hover:bg-slate-800/30"
+                <tbody className="divide-y divide-slate-200/70 dark:divide-slate-800/70 text-xs sm:text-sm">
+                  {sortedLeaderboard.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={isAdmin ? 7 : 6}
+                        className="py-8 px-4 text-center text-xs text-slate-500 dark:text-slate-400"
                       >
-                        <td className="py-3 px-2.5 font-mono tabular-nums text-xs font-bold text-amber-600 dark:text-[#f1c40f]">
-                          #{idx + 1}
-                        </td>
-                        <td className="py-3 px-2.5 font-bold text-slate-900 dark:text-white">
-                          {player.ign}
-                        </td>
-                        <td className="py-3 px-2.5">
-                          <RoleBadge
-                            role={player.primaryRole}
-                            customLabel={player.roleLabel}
-                          />
-                        </td>
-                        <td className="py-3 px-2.5 text-right font-mono tabular-nums text-xs text-slate-600 dark:text-slate-300">
-                          {total}
-                        </td>
-                        <td className="py-3 px-2.5 text-right font-mono tabular-nums text-xs">
-                          <span className="text-emerald-600 dark:text-emerald-400">
-                            {player.wins}W
-                          </span>{' '}
-                          -{' '}
-                          <span className="text-rose-600 dark:text-rose-400">
-                            {player.losses}L
-                          </span>
-                        </td>
-                        <td className="py-3 px-2.5 text-right font-mono tabular-nums font-bold text-xs text-cyan-700 dark:text-[#00f2fe]">
-                          {wr.toFixed(1)}%
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        {t.emptyLeaderboard}
+                      </td>
+                    </tr>
+                  ) : (
+                    sortedLeaderboard.map((player, idx) => {
+                      const total = player.wins + player.losses;
+                      const wr = calcWinrate(player.wins, player.losses);
+                      return (
+                        <tr
+                          key={player.id}
+                          className="hover:bg-slate-50 dark:hover:bg-slate-800/30"
+                        >
+                          <td className="py-2.5 px-1.5 sm:px-2 font-mono tabular-nums text-xs font-bold text-amber-600 dark:text-[#f1c40f]">
+                            #{idx + 1}
+                          </td>
+                          <td className="py-2.5 px-1.5 sm:px-2 font-bold text-slate-900 dark:text-white min-w-0">
+                            <div className="truncate">{player.ign}</div>
+                            <div className="sm:hidden mt-0.5 min-w-0">
+                              <RoleBadge
+                                role={player.primaryRole}
+                                customLabel={player.roleLabel}
+                              />
+                            </div>
+                          </td>
+                          <td className="hidden sm:table-cell py-2.5 px-2.5">
+                            <RoleBadge
+                              role={player.primaryRole}
+                              customLabel={player.roleLabel}
+                            />
+                          </td>
+                          <td className="hidden sm:table-cell py-2.5 px-2.5 text-right font-mono tabular-nums text-xs text-slate-600 dark:text-slate-300">
+                            {total}
+                          </td>
+                          <td className="py-2.5 px-1.5 sm:px-2 text-right font-mono tabular-nums text-xs whitespace-nowrap">
+                            <span className="text-emerald-600 dark:text-emerald-400">
+                              {player.wins}W
+                            </span>{' '}
+                            -{' '}
+                            <span className="text-rose-600 dark:text-rose-400">
+                              {player.losses}L
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-1.5 sm:px-2 text-right font-mono tabular-nums font-bold text-xs text-cyan-700 dark:text-[#00f2fe] whitespace-nowrap">
+                            {wr.toFixed(1)}%
+                          </td>
+                          {isAdmin && (
+                            <td className="py-2.5 px-1.5 sm:px-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleDeleteLeaderboardPlayer(player.ign)
+                                }
+                                title={t.deletePlayerTitle}
+                                className="h-8 w-8 rounded-lg bg-rose-500/10 hover:bg-rose-500 text-rose-600 dark:text-rose-400 hover:text-white inline-flex items-center justify-center transition cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2017,6 +2455,58 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Developer / Admin Access Lock */}
+              <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+                <div>
+                  <h3 className="text-sm font-display font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-amber-500 dark:text-[#f1c40f] shrink-0" />
+                    <span>{t.adminTitle}</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {t.adminDesc}
+                  </p>
+                </div>
+
+                {isAdmin ? (
+                  <div className="p-4 rounded-xl bg-amber-500/10 dark:bg-[#f1c40f]/10 border border-amber-500/35 dark:border-[#f1c40f]/35 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 text-xs font-semibold text-amber-800 dark:text-[#f1c40f]">
+                      <Unlock className="w-4 h-4 shrink-0" />
+                      <span>{t.adminUnlockedBadge}</span>
+                    </div>
+                    {adminPinUnlocked && (
+                      <button
+                        type="button"
+                        onClick={handleLockAdmin}
+                        className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-rose-500 hover:text-white transition flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                      >
+                        <Lock className="w-3.5 h-3.5 shrink-0" />
+                        <span>{t.adminLockBtn}</span>
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <form
+                    onSubmit={handleUnlockAdminPin}
+                    className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5"
+                  >
+                    <input
+                      type="password"
+                      value={adminPinInput}
+                      onChange={(e) => setAdminPinInput(e.target.value)}
+                      placeholder={t.adminPinPlaceholder}
+                      className="flex-1 min-w-0 h-10 px-3.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500 dark:focus:border-[#f1c40f]"
+                    />
+                    <button
+                      type="submit"
+                      className="min-h-[40px] px-4 py-2 rounded-xl bg-[#f1c40f] text-slate-950 font-display font-bold text-xs hover:bg-yellow-300 transition flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                    >
+                      <Unlock className="w-3.5 h-3.5 shrink-0" />
+                      <span>{t.adminUnlockBtn}</span>
+                    </button>
+                  </form>
+                )}
+              </div>
+
               {/* Google Account Sign-In */}
               <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
                 <div>
@@ -2066,61 +2556,61 @@ export default function App() {
       {/* Mobile Bottom Navigation */}
       <nav
         aria-label="Mobile Navigation"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-16 bg-white/95 dark:bg-[#0b0f19]/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-4 items-center px-2"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-16 bg-white/95 dark:bg-[#0b0f19]/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-4 items-center px-1.5"
       >
         <button
           type="button"
           onClick={() => setActiveTab('queue')}
-          className={`min-h-[46px] flex flex-col items-center justify-center rounded-lg cursor-pointer ${
+          className={`min-h-[46px] min-w-0 px-1 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
             activeTab === 'queue'
               ? 'text-cyan-700 dark:text-[#00f2fe]'
               : 'text-slate-500 dark:text-slate-400'
           }`}
         >
-          <Users className="w-5 h-5" />
-          <span className="text-[10px] font-semibold mt-0.5">
+          <Users className="w-5 h-5 shrink-0" />
+          <span className="w-full text-[10px] font-semibold mt-0.5 truncate text-center">
             {t.navSlotsShort}
           </span>
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('match')}
-          className={`min-h-[46px] flex flex-col items-center justify-center rounded-lg cursor-pointer ${
+          className={`min-h-[46px] min-w-0 px-1 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
             activeTab === 'match'
               ? 'text-cyan-700 dark:text-[#00f2fe]'
               : 'text-slate-500 dark:text-slate-400'
           }`}
         >
-          <Swords className="w-5 h-5" />
-          <span className="text-[10px] font-semibold mt-0.5">
+          <Swords className="w-5 h-5 shrink-0" />
+          <span className="w-full text-[10px] font-semibold mt-0.5 truncate text-center">
             {t.navMatchShort}
           </span>
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('leaderboard')}
-          className={`min-h-[46px] flex flex-col items-center justify-center rounded-lg cursor-pointer ${
+          className={`min-h-[46px] min-w-0 px-1 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
             activeTab === 'leaderboard'
               ? 'text-cyan-700 dark:text-[#00f2fe]'
               : 'text-slate-500 dark:text-slate-400'
           }`}
         >
-          <Trophy className="w-5 h-5" />
-          <span className="text-[10px] font-semibold mt-0.5">
+          <Trophy className="w-5 h-5 shrink-0" />
+          <span className="w-full text-[10px] font-semibold mt-0.5 truncate text-center">
             {t.navLeaderboardShort}
           </span>
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('settings')}
-          className={`min-h-[46px] flex flex-col items-center justify-center rounded-lg cursor-pointer ${
+          className={`min-h-[46px] min-w-0 px-1 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
             activeTab === 'settings'
               ? 'text-cyan-700 dark:text-[#00f2fe]'
               : 'text-slate-500 dark:text-slate-400'
           }`}
         >
-          <Settings className="w-5 h-5" />
-          <span className="text-[10px] font-semibold mt-0.5">
+          <Settings className="w-5 h-5 shrink-0" />
+          <span className="w-full text-[10px] font-semibold mt-0.5 truncate text-center">
             {t.navSettingsShort}
           </span>
         </button>

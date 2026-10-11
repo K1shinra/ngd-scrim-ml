@@ -246,6 +246,108 @@ export function autoBalance5v5(
   };
 }
 
+export function buildDirectLineup5v5(
+  poolSource: 'batch1' | 'batch2',
+  slots: (ScrimSlot | null)[],
+  players: PlayerProfile[]
+): BalanceResult {
+  const startIdx = poolSource === 'batch1' ? 0 : 10;
+
+  const assignTeamLanes = (rawSlots: (ScrimSlot | null)[], fallbackOffset: number): MatchParticipant[] => {
+    const entries: CandidateEntry[] = [];
+    for (let i = 0; i < 5; i++) {
+      const s = rawSlots[i];
+      if (s) {
+        entries.push({
+          ign: s.ign,
+          role: s.role,
+          secondaryRole: s.secondaryRole,
+          roleLabel: s.roleLabel,
+        });
+      } else {
+        const fb = players[(fallbackOffset + i) % Math.max(1, players.length)];
+        if (fb) {
+          entries.push({
+            ign: fb.ign,
+            role: fb.primaryRole,
+            secondaryRole: fb.secondaryRole,
+            roleLabel: fb.roleLabel,
+          });
+        } else {
+          const defaultLane = CORE_FIVE_ROLES[i];
+          entries.push({
+            ign: `Player ${startIdx + fallbackOffset + i + 1}`,
+            role: defaultLane,
+            roleLabel: ROLE_META[defaultLane].gcLabel,
+          });
+        }
+      }
+    }
+
+    const usedLanes = new Set<MlbbRole>();
+    const result: MatchParticipant[] = [];
+
+    for (const entry of entries) {
+      let assigned: MlbbRole;
+      if (entry.role !== 'Flex Role' && !usedLanes.has(entry.role)) {
+        assigned = entry.role;
+      } else if (
+        entry.secondaryRole &&
+        entry.secondaryRole !== 'Flex Role' &&
+        !usedLanes.has(entry.secondaryRole)
+      ) {
+        assigned = entry.secondaryRole;
+      } else {
+        assigned =
+          CORE_FIVE_ROLES.find((r) => !usedLanes.has(r)) ||
+          (entry.role === 'Flex Role' ? 'Jungle' : entry.role);
+      }
+      usedLanes.add(assigned);
+      result.push({
+        ign: entry.ign,
+        selectedRole: entry.role,
+        secondaryRole: entry.secondaryRole,
+        roleLabel: entry.roleLabel,
+        assignedLane: assigned,
+        winrateSnapshot: getPlayerWinrate(entry.ign, players),
+      });
+    }
+
+    return result;
+  };
+
+  const teamBlue = assignTeamLanes(slots.slice(startIdx, startIdx + 5), 0);
+  const teamRed = assignTeamLanes(slots.slice(startIdx + 5, startIdx + 10), 5);
+
+  const blueAvgWr =
+    teamBlue.length > 0
+      ? Number(
+          (
+            teamBlue.reduce((acc, p) => acc + p.winrateSnapshot, 0) /
+            teamBlue.length
+          ).toFixed(1)
+        )
+      : 0;
+
+  const redAvgWr =
+    teamRed.length > 0
+      ? Number(
+          (
+            teamRed.reduce((acc, p) => acc + p.winrateSnapshot, 0) /
+            teamRed.length
+          ).toFixed(1)
+        )
+      : 0;
+
+  return {
+    teamBlue,
+    teamRed,
+    blueAvgWr,
+    redAvgWr,
+    sourceSummary: `Slot Order (1–5 vs 6–10) · Blue ${blueAvgWr}% WR vs Red ${redAvgWr}% WR`,
+  };
+}
+
 export function parseTraditionalGcText(
   rawText: string
 ): { slotNum: number; ign: string; role: MlbbRole; secondaryRole?: MlbbRole; roleLabel: string }[] {
@@ -376,8 +478,18 @@ export function formatGcText(
     if (mode === 'full') {
       lines.push('━━━━━━━━━━━━━━━━━━━━━━');
     }
-    lines.push(`🎮 SHUFFLED 5v5 MATCHUP: ${liveMatch.roomName}`);
-    lines.push(`👑 Host: ${liveMatch.hostIgn} | Format: ${liveMatch.seriesFormat}`);
+    lines.push(`🎮 5v5 MATCHUP: ${liveMatch.roomName}`);
+    const formatText =
+      liveMatch.seriesFormat === 'BO1'
+        ? '1 Game (BO1)'
+        : liveMatch.seriesFormat === 'BO3'
+          ? 'Best of 3 (BO3)'
+          : 'Best of 5 (BO5)';
+    const bWins = liveMatch.blueSeriesWins || 0;
+    const rWins = liveMatch.redSeriesWins || 0;
+    lines.push(
+      `🏆 Format: ${formatText} | Series Score: Blue ${bWins} - ${rWins} Red`
+    );
     lines.push('');
     lines.push('🔵 TEAM BLUE (FIRST PICK):');
     liveMatch.teamBlue.forEach((p) => {

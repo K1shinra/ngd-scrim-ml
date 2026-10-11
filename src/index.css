@@ -10,8 +10,11 @@
 }
 
 @layer base {
-  body {
+  html,
+  body,
+  #root {
     font-family: var(--font-sans);
+    max-width: 100vw;
     overflow-x: hidden;
   }
 

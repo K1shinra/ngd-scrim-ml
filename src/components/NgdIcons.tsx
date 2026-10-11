@@ -6,7 +6,7 @@ export const NgdBrandEmblem: React.FC<{ size?: 'sm' | 'md' | 'lg' }> = ({
 }) => {
   const dimensions =
     size === 'sm'
-      ? 'w-11 h-9'
+      ? 'w-9 h-7 sm:w-11 sm:h-9'
       : size === 'lg'
         ? 'w-28 h-22'
         : 'w-14 h-11';
@@ -220,10 +220,10 @@ export const RoleBadge: React.FC<{
       : meta.role;
   return (
     <span
-      className={`inline-flex items-center gap-1.5 font-mono text-xs font-medium tracking-tight whitespace-nowrap shrink-0 ${meta.textClass}`}
+      className={`inline-flex items-center gap-1 font-mono text-[11px] sm:text-xs font-medium tracking-tight max-w-full min-w-0 ${meta.textClass}`}
     >
       <RoleIcon role={role} className="w-3.5 h-3.5 shrink-0" />
-      <span>{displayLabel}</span>
+      <span className="truncate">{displayLabel}</span>
     </span>
   );
 };

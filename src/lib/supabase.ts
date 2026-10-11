@@ -137,6 +137,16 @@ export async function fetchFromSupabase() {
   };
 }
 
+export async function deletePlayerFromSupabase(ign: string) {
+  if (!supabaseClient) return;
+  await supabaseClient.from('players').delete().eq('ign', ign);
+}
+
+export async function clearAllPlayersFromSupabase() {
+  if (!supabaseClient) return;
+  await supabaseClient.from('players').delete().gte('id', 0);
+}
+
 export async function syncToSupabase(payload: {
   players: PlayerProfile[];
   slots: (ScrimSlot | null)[];

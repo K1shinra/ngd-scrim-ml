@@ -170,6 +170,8 @@ export interface LiveMatchState {
   teamRed: MatchParticipant[];
   mvpIgn: string;
   shuffleNote?: string;
+  blueSeriesWins?: number;
+  redSeriesWins?: number;
 }
 
 export interface MatchHistoryRecord {

@@ -1,4 +1,4 @@
-import { asc, desc } from 'drizzle-orm';
+import { asc, desc, notInArray } from 'drizzle-orm';
 import { db } from './index.ts';
 import {
   matchHistory,
@@ -18,7 +18,11 @@ import {
   ScrimSlot,
 } from '../data/ngdData.ts';
 
+let hasCheckedInitialSeed = false;
+
 export async function ensureInitialSeedData() {
+  if (hasCheckedInitialSeed) return;
+  hasCheckedInitialSeed = true;
   try {
     const existingPlayers = await db.select().from(players).limit(1);
     if (existingPlayers.length > 0) {
@@ -207,7 +211,14 @@ export async function saveFullScrimState(
   userUid?: string
 ) {
   try {
-    // 1. Upsert all players
+    // 1. Sync deleted players & upsert remaining players
+    if (payload.players.length === 0) {
+      await db.delete(players);
+    } else {
+      const activeIgns = payload.players.map((p) => p.ign);
+      await db.delete(players).where(notInArray(players.ign, activeIgns));
+    }
+
     for (const p of payload.players) {
       await db
         .insert(players)
