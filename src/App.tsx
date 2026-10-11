@@ -455,7 +455,15 @@ function dedupeMatchHistory(
 }
 
 export default function App() {
-  const { user, signInWithGoogle, signOut, getFreshToken } = useAuth();
+  const {
+    user,
+    signingIn,
+    authError,
+    signInWithGoogle,
+    signInWithSquadAccount,
+    signOut,
+    getFreshToken,
+  } = useAuth();
   const hasLoadedInitialCloudRef = useRef(false);
   const hasLoadedSupabaseRef = useRef(false);
   const [players, setPlayers] = useState<PlayerProfile[]>(() => {
@@ -535,6 +543,9 @@ export default function App() {
   });
   const [adminPinInput, setAdminPinInput] = useState('');
   const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const [squadSignInName, setSquadSignInName] = useState('');
+  const [squadSignInEmail, setSquadSignInEmail] = useState('');
+  const [squadSignInPin, setSquadSignInPin] = useState('');
 
   const isAdmin = useMemo(() => {
     const emailMatch =
@@ -3261,10 +3272,17 @@ export default function App() {
                       <div className="font-display font-bold text-sm text-slate-900 dark:text-white">
                         {user.displayName || user.email}
                       </div>
+                      {user.email && (
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                          {user.email}
+                        </div>
+                      )}
                     </div>
                     <button
                       type="button"
-                      onClick={() => signOut()}
+                      onClick={() => {
+                        void signOut();
+                      }}
                       className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-rose-500 hover:text-white transition flex items-center gap-1.5 cursor-pointer"
                     >
                       <LogOut className="w-3.5 h-3.5" />
@@ -3272,14 +3290,153 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => signInWithGoogle()}
-                    className="min-h-[42px] px-4 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs sm:text-sm hover:opacity-90 transition flex items-center gap-2 cursor-pointer"
-                  >
-                    <LogIn className="w-4 h-4" />
-                    <span>{t.signInGoogleBtn}</span>
-                  </button>
+                  <div className="space-y-4">
+                    <div className="space-y-2.5">
+                      <button
+                        type="button"
+                        disabled={signingIn}
+                        onClick={async () => {
+                          const res = await signInWithGoogle();
+                          if (res.ok) {
+                            triggerToast(
+                              language === 'tl'
+                                ? 'Matagumpay na naka-sign in sa Google!'
+                                : 'Successfully signed in with Google!'
+                            );
+                          } else if (res.error) {
+                            triggerToast(res.error);
+                          }
+                        }}
+                        className="min-h-[42px] px-4 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs sm:text-sm hover:opacity-90 disabled:opacity-60 transition flex items-center gap-2 cursor-pointer"
+                      >
+                        <LogIn className="w-4 h-4" />
+                        <span>
+                          {signingIn
+                            ? language === 'tl'
+                              ? 'Nagbubukas ng Google Sign-In...'
+                              : 'Opening Google Sign-In...'
+                            : t.signInGoogleBtn}
+                        </span>
+                      </button>
+                      {authError && (
+                        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs font-medium text-amber-700 dark:text-amber-300">
+                          {authError}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Direct Squad Account Sign-In (Works on all deployed domains / Vercel / Mobile browsers) */}
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const cleanEmail = squadSignInEmail.trim().toLowerCase();
+                        const cleanName = squadSignInName.trim();
+                        if (!cleanEmail || !cleanEmail.includes('@')) {
+                          triggerToast(
+                            language === 'tl'
+                              ? 'Maglagay ng valid na Email address.'
+                              : 'Please enter a valid Email address.'
+                          );
+                          return;
+                        }
+                        const isEnteringAdminEmail =
+                          ADMIN_EMAILS.includes(cleanEmail);
+                        if (
+                          isEnteringAdminEmail &&
+                          !adminPinUnlocked &&
+                          squadSignInPin.trim() !== ADMIN_PIN_CODE
+                        ) {
+                          triggerToast(
+                            language === 'tl'
+                              ? 'Kailangan ang tamang Admin PIN (2408) para sa Admin Email.'
+                              : 'Valid Admin PIN is required for Admin Email sign-in.'
+                          );
+                          return;
+                        }
+                        if (
+                          isEnteringAdminEmail &&
+                          squadSignInPin.trim() === ADMIN_PIN_CODE
+                        ) {
+                          setAdminPinUnlocked(true);
+                          try {
+                            localStorage.setItem(
+                              STORAGE_KEYS.adminUnlocked,
+                              'true'
+                            );
+                          } catch {
+                            // Ignore storage error
+                          }
+                        }
+                        signInWithSquadAccount({
+                          displayName: cleanName || cleanEmail.split('@')[0],
+                          email: cleanEmail,
+                        });
+                        setSquadSignInName('');
+                        setSquadSignInEmail('');
+                        setSquadSignInPin('');
+                        triggerToast(
+                          language === 'tl'
+                            ? 'Naka-sign in na ang iyong Squad Account!'
+                            : 'Squad Account signed in successfully!'
+                        );
+                      }}
+                      className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 space-y-2.5"
+                    >
+                      <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                        {language === 'tl'
+                          ? 'Direct Squad Account Sign-In (Para sa Deployed Link / Mobile Browser)'
+                          : 'Direct Squad Account Sign-In (For Deployed Link / Mobile Browser)'}
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          value={squadSignInName}
+                          onChange={(e) => setSquadSignInName(e.target.value)}
+                          placeholder={
+                            language === 'tl'
+                              ? 'IGN o Pangalan (hal. Estranghero)'
+                              : 'IGN or Name (e.g. Estranghero)'
+                          }
+                          className="min-h-[40px] px-3 py-2 rounded-lg bg-white dark:bg-[#111827] border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500"
+                        />
+                        <input
+                          type="email"
+                          required
+                          value={squadSignInEmail}
+                          onChange={(e) => setSquadSignInEmail(e.target.value)}
+                          placeholder="Email (e.g. player@gmail.com)"
+                          className="min-h-[40px] px-3 py-2 rounded-lg bg-white dark:bg-[#111827] border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                      {ADMIN_EMAILS.includes(
+                        squadSignInEmail.trim().toLowerCase()
+                      ) &&
+                        !adminPinUnlocked && (
+                          <input
+                            type="password"
+                            value={squadSignInPin}
+                            onChange={(e) => setSquadSignInPin(e.target.value)}
+                            placeholder={
+                              language === 'tl'
+                                ? 'Ilagay ang Admin PIN para i-verify ang Admin Email'
+                                : 'Enter Admin PIN to verify Admin Email'
+                            }
+                            className="w-full min-h-[40px] px-3 py-2 rounded-lg bg-white dark:bg-[#111827] border border-amber-500/50 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-400"
+                          />
+                        )}
+                      <button
+                        type="submit"
+                        className="min-h-[38px] px-4 py-2 rounded-lg bg-slate-900 dark:bg-slate-800 text-white font-display font-bold text-xs hover:bg-slate-800 dark:hover:bg-slate-700 transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <LogIn className="w-3.5 h-3.5" />
+                        <span>
+                          {language === 'tl'
+                            ? 'Mag-Sign In gamit ang Email / IGN'
+                            : 'Sign In with Email / IGN'}
+                        </span>
+                      </button>
+                    </form>
+                  </div>
                 )}
               </div>
             </section>
