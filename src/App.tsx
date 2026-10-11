@@ -21,6 +21,11 @@ import {
 } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
 import {
+  fetchFromSupabase,
+  supabaseClient,
+  syncToSupabase,
+} from './lib/supabase';
+import {
   INITIAL_LIVE_MATCH,
   INITIAL_MATCH_HISTORY,
   INITIAL_PLAYERS,
@@ -275,6 +280,7 @@ const TRANSLATIONS = {
 export default function App() {
   const { user, signInWithGoogle, signOut, getFreshToken } = useAuth();
   const hasLoadedInitialCloudRef = useRef(false);
+  const hasLoadedSupabaseRef = useRef(false);
   const [players, setPlayers] = useState<PlayerProfile[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.players);
@@ -359,6 +365,57 @@ export default function App() {
     mediaQuery.addEventListener('change', applyTheme);
     return () => mediaQuery.removeEventListener('change', applyTheme);
   }, [themeMode]);
+
+  // Fetch initial state from Supabase when VITE_SUPABASE_ANON_KEY is configured
+  useEffect(() => {
+    if (!supabaseClient) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const remote = await fetchFromSupabase();
+        if (!remote || cancelled) return;
+
+        if (remote.hasPlayers) {
+          setPlayers(remote.players);
+        }
+        if (remote.hasSlots || remote.hasPlayers) {
+          setSlots(remote.slots);
+        }
+        if (remote.liveMatch) {
+          setLiveMatch(remote.liveMatch);
+        }
+        if (remote.hasHistory) {
+          setMatchHistory(remote.matchHistory);
+        }
+        if (!remote.hasPlayers && !remote.hasSlots) {
+          await syncToSupabase({
+            players: INITIAL_PLAYERS,
+            slots: INITIAL_SLOTS,
+            liveMatch: INITIAL_LIVE_MATCH,
+          });
+        }
+        hasLoadedSupabaseRef.current = true;
+      } catch {
+        hasLoadedSupabaseRef.current = true;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Sync changes to Supabase when VITE_SUPABASE_ANON_KEY is configured
+  useEffect(() => {
+    if (!supabaseClient || !hasLoadedSupabaseRef.current) return;
+
+    const timer = setTimeout(() => {
+      syncToSupabase({ players, slots, liveMatch }).catch(() => {});
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [players, slots, liveMatch]);
 
   // Fetch initial state from PostgreSQL when authenticated
   useEffect(() => {

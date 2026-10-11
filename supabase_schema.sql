@@ -1,6 +1,6 @@
 -- ============================================================================
--- NGD Scrim Management System — PostgreSQL / Supabase SQL Schema
--- Run this in Supabase SQL Editor to create all tables and initial seed data.
+-- NGD Scrim Management System — Supabase SQL Setup
+-- Copy and paste this entire script into the Supabase SQL Editor and click RUN
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS "users" (
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS "scrim_slots" (
   "role_label" text NOT NULL,
   "is_ready" boolean DEFAULT true NOT NULL,
   "assigned_at" text NOT NULL,
-  "user_uid" text REFERENCES "users"("uid"),
+  "user_uid" text,
   "updated_at" timestamp DEFAULT now()
 );
 
@@ -61,3 +61,21 @@ CREATE TABLE IF NOT EXISTS "match_history" (
   "team_red_json" text NOT NULL,
   "created_at" timestamp DEFAULT now()
 );
+
+-- Enable public access for the Scrim Lobby on Supabase
+ALTER TABLE "scrim_slots" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "players" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "scrim_matches" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "match_history" ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public access scrim_slots" ON "scrim_slots";
+CREATE POLICY "Public access scrim_slots" ON "scrim_slots" FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access players" ON "players";
+CREATE POLICY "Public access players" ON "players" FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access scrim_matches" ON "scrim_matches";
+CREATE POLICY "Public access scrim_matches" ON "scrim_matches" FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access match_history" ON "match_history";
+CREATE POLICY "Public access match_history" ON "match_history" FOR ALL USING (true) WITH CHECK (true);
