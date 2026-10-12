@@ -171,8 +171,8 @@ const TRANSLATIONS = {
     selectTargetBtn: 'Select Player...',
     finishMatchTitle: 'Battle Result & Screenshot Auto-Reader',
     finishMatchDesc:
-      'Upload an MLBB Battle Result screenshot to auto-read stats, or select each team’s best player (MVP/SVP), enter the Kill Score, and tap the winning team.',
-    uploadScreenshotBtn: 'Upload Battle Result Screenshot',
+      'Best: Upload the main Scoreboard / KDA (Equipment) tab screenshot so KDA & MVP ratings are visible — or select both KDA + Data screenshots together.',
+    uploadScreenshotBtn: 'Upload Battle Result (KDA / Data)',
     scanningScreenshotText: 'Scanning MLBB Battle Result...',
     scannedReadyBadge: 'Screenshot Scanned — Stats & Rosters Auto-Filled!',
     confirmScannedWinnerBtn: 'Confirm & Save Scanned Result',
@@ -329,8 +329,8 @@ const TRANSLATIONS = {
     selectTargetBtn: 'Pumili ng Kapalit...',
     finishMatchTitle: 'Battle Result at Screenshot Auto-Reader',
     finishMatchDesc:
-      'Mag-upload ng MLBB Battle Result screenshot para automatic mabasa ang stats, o piliin ang MVP/SVP, ilagay ang Kill Score, at pindutin kung sino ang nanalo.',
-    uploadScreenshotBtn: 'I-upload ang Battle Result Screenshot',
+      'Pinakamaganda: I-upload yung unang tab (KDA / Equipment screen — hindi yung Data) para kita ang KDA at MVP Rating, o kaya i-select pareho (KDA + Data).',
+    uploadScreenshotBtn: 'I-upload ang Battle Result (KDA / Data)',
     scanningScreenshotText: 'Binabasa ang MLBB Battle Result...',
     scannedReadyBadge: 'Nabasa na ang Screenshot — Auto-Filled na ang Stats at Players!',
     confirmScannedWinnerBtn: 'I-save ang Resulta Mula sa Screenshot',

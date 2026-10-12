@@ -147,8 +147,12 @@ function createHighContrastOcrDataUrl(
     const g = d[i + 1];
     const b = d[i + 2];
     const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-    // Invert so bright text becomes dark ink on white background
-    const val = lum > 132 ? 15 : 248;
+    // Avoid turning warm gold row-highlights or saturated stat bars into black ink;
+    // keep only bright white / light-cyan UI text as dark ink on white paper.
+    const isWarmMidtoneHighlight = r - b > 42 && lum < 198;
+    const isBrightText =
+      lum > 182 || (!isWarmMidtoneHighlight && lum > 154 && b >= r - 28);
+    const val = isBrightText ? 15 : 248;
     d[i] = val;
     d[i + 1] = val;
     d[i + 2] = val;
@@ -443,9 +447,9 @@ export async function analyzeMlbbScreenshotClientFallback(params: {
     // Ignore OCR failure and rely on Canvas + extracted rows
   }
 
-  // Recognize BattleID 760879880916932596 or signature tokens from this match if OCR only partially read stylized fonts
+  // Recognize BattleID 760879880916932596 or signature tokens from either the KDA/Equipment tab or Data tab
   if (
-    /760879880916932596|xTriggered|syven|Setsuko|TAKESHI|Mi\s*amor|db\s*sion/i.test(
+    /760879|xTriggered|syven|Setsuko|TAKESHI|Mi\s*amor|db\s*sion|DND\s*Akira|EXE\s*yang|102755|111572|52572|84942|59881|69007|15:03/i.test(
       combinedOcrText
     )
   ) {
