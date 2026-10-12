@@ -133,11 +133,16 @@ export async function analyzeMlbbScreenshot(params: {
   knownIgns?: string[];
 }): Promise<ExtractedBattleResult> {
   const apiKey =
-    process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '';
+    process.env.GEMINI_API_KEY ||
+    process.env.VITE_GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    process.env.GOOGLE_GENAI_API_KEY ||
+    process.env.NEXT_PUBLIC_GEMINI_API_KEY ||
+    '';
 
   if (!apiKey) {
     throw new Error(
-      'Missing GEMINI_API_KEY on server. Add GEMINI_API_KEY in Environment Variables.'
+      'Missing GEMINI_API_KEY on server. Make sure GEMINI_API_KEY is configured in your Vercel Environment Variables.'
     );
   }
 
@@ -215,27 +220,22 @@ Instructions:
     ],
   };
 
-  // Try available fast multimodal models in priority order so temporary 503 demand spikes on any single model never break scanning
-  const candidateModels: { model: string; useLowThinking?: boolean }[] = [
-    { model: 'gemini-3-flash-preview', useLowThinking: true },
-    { model: 'gemini-flash-lite-latest' },
-    { model: 'gemini-3.1-flash-lite-preview' },
-    { model: 'gemini-3.8-flash', useLowThinking: true },
-    { model: 'gemini-flash-latest' },
+  // Valid Google Gen AI multimodal models in priority order
+  const candidateModels: string[] = [
+    'gemini-flash-latest',
+    'gemini-3.8-flash',
+    'gemini-3.1-flash-lite',
   ];
 
   let rawText: string | undefined;
   let lastError: unknown = null;
 
-  for (const candidate of candidateModels) {
+  for (const model of candidateModels) {
     try {
       const response = await ai.models.generateContent({
-        model: candidate.model,
+        model,
         contents,
         config: {
-          ...(candidate.useLowThinking
-            ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-            : {}),
           responseMimeType: 'application/json',
           responseSchema: RESPONSE_SCHEMA,
         },
@@ -246,6 +246,29 @@ Instructions:
       }
     } catch (err) {
       lastError = err;
+      // Try once more with standard JSON mode if responseSchema had an issue
+      try {
+        const fallbackRes = await ai.models.generateContent({
+          model,
+          contents: {
+            parts: [
+              ...imageParts,
+              {
+                text: `${promptText}\n\nIMPORTANT: Return ONLY a valid JSON object matching this structure: { "winner": "Blue"|"Red", "blueKills": number, "redKills": number, "duration": string, "mvpIgn": string, "mvpKda": string, "svpIgn": string, "svpKda": string, "feederIgn": string, "teamBlue": [{ "ign": string, "kda": string, "rating": string, "isMvp": boolean, "heroDamage": number, "heroDamagePct": number, "damageTaken": number, "damageTakenPct": number, "turretDamage": number, "turretDamagePct": number, "teamfightPct": number, "gold": number, "medal": string, "isFeeder": boolean }], "teamRed": [{ "ign": string, "kda": string, "rating": string, "isMvp": boolean, "heroDamage": number, "heroDamagePct": number, "damageTaken": number, "damageTakenPct": number, "turretDamage": number, "turretDamagePct": number, "teamfightPct": number, "gold": number, "medal": string, "isFeeder": boolean }] }`,
+              },
+            ],
+          },
+          config: {
+            responseMimeType: 'application/json',
+          },
+        });
+        if (fallbackRes.text && fallbackRes.text.trim()) {
+          rawText = fallbackRes.text;
+          break;
+        }
+      } catch (innerErr) {
+        lastError = innerErr;
+      }
     }
   }
 

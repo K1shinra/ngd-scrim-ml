@@ -20,7 +20,7 @@ import {
   ROLE_META,
 } from '../data/ngdData';
 
-export type PosterTemplate = 'recap' | 'full10' | 'feeder' | 'leaders';
+export type PosterTemplate = 'recap' | 'full10' | 'feeder' | 'leaders' | 'lineup';
 
 interface MatchPosterModalProps {
   match: MatchHistoryRecord;
@@ -132,7 +132,9 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
           ? 900
           : selectedTemplate === 'leaders'
             ? 960
-            : 850;
+            : selectedTemplate === 'lineup'
+              ? 880
+              : 850;
 
     canvas.width = width;
     canvas.height = height;
@@ -675,6 +677,63 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
       );
     }
 
+    // ==========================================
+    // TEMPLATE 5: PRE-MATCH FACEOFF LINEUP
+    // ==========================================
+    if (selectedTemplate === 'lineup') {
+      const bannerY = 160;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.strokeStyle = '#00f2fe';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(60, bannerY, width - 120, 56, 12);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#00f2fe';
+      ctx.font = '900 18px "Montserrat", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        `⚔️ OFFICIAL 5v5 SCRIM MATCHUP · ${match.durationText || 'BEST OF SERIES'} · PRE-MATCH FACEOFF ⚔️`,
+        width / 2,
+        bannerY + 35
+      );
+
+      // VS Badge in Center
+      const vsY = 460;
+      ctx.fillStyle = '#f1c40f';
+      ctx.font = '900 24px "Montserrat", sans-serif';
+      ctx.fillText('VS', width / 2, vsY);
+
+      // Draw Team Blue Column
+      const colW = (width - 120 - 50) / 2;
+      const leftColX = 60;
+      const rightColX = width / 2 + 25;
+      const colY = bannerY + 75;
+
+      drawLineupTeamColumn(
+        ctx,
+        'TEAM BLUE',
+        match.teamBlue,
+        leftColX,
+        colY,
+        colW,
+        '#00f2fe',
+        match.blueAvgWr
+      );
+
+      drawLineupTeamColumn(
+        ctx,
+        'TEAM RED',
+        match.teamRed,
+        rightColX,
+        colY,
+        colW,
+        '#f43f5e',
+        match.redAvgWr
+      );
+    }
+
     // Footer Branding
     ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
     ctx.font = '500 12px "JetBrains Mono", monospace';
@@ -683,6 +742,66 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
 
     ctx.restore();
   }, [match, selectedTemplate, all10Players, categoryLeaders]);
+
+  function drawLineupTeamColumn(
+    ctx: CanvasRenderingContext2D,
+    teamName: string,
+    players: MatchParticipant[],
+    x: number,
+    y: number,
+    w: number,
+    colorHex: string,
+    avgWr?: number
+  ) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.strokeStyle = colorHex;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, 44, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = colorHex;
+    ctx.font = '900 18px "Montserrat", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(teamName, x + 16, y + 28);
+
+    if (typeof avgWr === 'number' && avgWr > 0) {
+      ctx.textAlign = 'right';
+      ctx.font = 'bold 13px "JetBrains Mono", monospace';
+      ctx.fillText(`AVG WR: ${avgWr.toFixed(1)}%`, x + w - 16, y + 28);
+      ctx.textAlign = 'left';
+    }
+
+    const rowH = 68;
+    players.slice(0, 5).forEach((p, idx) => {
+      const rowY = y + 54 + idx * (rowH + 6);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x, rowY, w, rowH, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      const roleMeta = ROLE_META[p.assignedLane];
+      ctx.fillStyle = roleMeta?.accentHex || '#38bdf8';
+      ctx.font = 'bold 12px "JetBrains Mono", monospace';
+      ctx.fillText(roleMeta?.shortLabel || 'FLEX', x + 16, rowY + 26);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '900 18px "Montserrat", sans-serif';
+      ctx.fillText(p.ign, x + 62, rowY + 28);
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '500 13px "JetBrains Mono", monospace';
+      ctx.fillText(
+        `Lane: ${roleMeta?.gcLabel || p.assignedLane} · WR: ${p.winrateSnapshot}%`,
+        x + 16,
+        rowY + 52
+      );
+    });
+  }
 
   // Helper function to draw a team column for Match Recap
   function drawTeamColumn(
@@ -901,57 +1020,70 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
         </div>
 
         {/* Template Selector Bar */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-4 pb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-4 pb-3">
           <button
             type="button"
             onClick={() => setSelectedTemplate('recap')}
-            className={`px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`px-2.5 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
               selectedTemplate === 'recap'
                 ? 'bg-[#f1c40f] text-slate-950 shadow-md font-display'
                 : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800 border border-slate-700/60'
             }`}
           >
             <Trophy className="w-3.5 h-3.5 shrink-0" />
-            <span>🏆 Match Recap</span>
+            <span className="truncate">🏆 Recap</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedTemplate('lineup')}
+            className={`px-2.5 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+              selectedTemplate === 'lineup'
+                ? 'bg-blue-600 text-white shadow-md font-display'
+                : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800 border border-slate-700/60'
+            }`}
+          >
+            <Swords className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">⚔️ Lineup Card</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSelectedTemplate('full10')}
-            className={`px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`px-2.5 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
               selectedTemplate === 'full10'
                 ? 'bg-cyan-500 text-slate-950 shadow-md font-display'
                 : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800 border border-slate-700/60'
             }`}
           >
             <Layers className="w-3.5 h-3.5 shrink-0" />
-            <span>📊 10-Player Ranking</span>
+            <span className="truncate">📊 10-Player</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSelectedTemplate('feeder')}
-            className={`px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`px-2.5 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
               selectedTemplate === 'feeder'
                 ? 'bg-amber-600 text-white shadow-md font-display'
                 : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800 border border-slate-700/60'
             }`}
           >
             <Skull className="w-3.5 h-3.5 shrink-0" />
-            <span>🥉 Feeder / Tanso Award</span>
+            <span className="truncate">🥉 Feeder Award</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSelectedTemplate('leaders')}
-            className={`px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`px-2.5 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
               selectedTemplate === 'leaders'
                 ? 'bg-purple-600 text-white shadow-md font-display'
                 : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800 border border-slate-700/60'
             }`}
           >
             <Sparkles className="w-3.5 h-3.5 shrink-0" />
-            <span>⚔️ Data Leaders</span>
+            <span className="truncate">⚔️ Data Leaders</span>
           </button>
         </div>
 
@@ -967,6 +1099,7 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
         <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="text-xs text-slate-400">
             {selectedTemplate === 'recap' && 'Official winner, MVP spotlight, and team rosters.'}
+            {selectedTemplate === 'lineup' && 'Pre-match hype graphic with 5v5 rosters, average winrates, and lanes.'}
             {selectedTemplate === 'full10' && 'All 10 scrimmage players ranked #1 to #10.'}
             {selectedTemplate === 'feeder' && 'Entertaining Bronze Feeder of the Match card for GC banter.'}
             {selectedTemplate === 'leaders' && 'Damage God, Tower Eraser, Pambansang Shield, and Teamfight Master.'}

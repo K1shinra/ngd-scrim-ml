@@ -31,6 +31,11 @@ import {
   UserPlus,
   Users,
   BarChart3,
+  UserCheck,
+  User,
+  Zap,
+  Share2,
+  Scale,
 } from 'lucide-react';
 import { GameStatsTab } from './components/GameStatsTab';
 import { useAuth } from './context/AuthContext';
@@ -67,6 +72,7 @@ import {
 import { NgdBrandEmblem, RoleBadge, RoleIcon } from './components/NgdIcons';
 import {
   autoBalance5v5,
+  autoBalanceCurrentParticipants,
   buildDirectLineup5v5,
   formatBattleResultGcText,
   formatGcText,
@@ -75,6 +81,7 @@ import {
 } from './utils/scrimEngine';
 import { analyzeMlbbScreenshotClientFallback } from './utils/clientScreenshotAnalyzer';
 import type { ExtractedPlayerStat } from './server/screenshotAnalyzer';
+import { MatchPosterModal, PosterTemplate } from './components/MatchPosterModal';
 
 type ActiveTab = 'queue' | 'match' | 'stats' | 'leaderboard' | 'settings';
 type LeaderboardSort = 'wins' | 'mvp' | 'winrate' | 'matches';
@@ -168,6 +175,19 @@ const TRANSLATIONS = {
     autoBalanceBtn: 'Auto-Balance (Fair WR)',
     shuffleAgainBtn: 'Shuffle Teams Again',
     copy5v5Btn: 'Copy 5v5 Matchup',
+    exportLineupPosterBtn: 'Export Lineup Poster',
+    viewModeRoster: 'Team Rosters',
+    viewModeMatchup: 'Lane Matchups (Vs Mode)',
+    fairnessBalanced: 'Fair & Balanced Matchup',
+    fairnessImbalanced: 'Imbalanced Matchup',
+    autoBalanceCurrentBtn: 'Auto-Balance Lineup (Equal WR)',
+    swapLaneBtn: 'Swap Opponents',
+    youBadge: 'YOU',
+    yourRoleInMatch: 'You are playing in this match',
+    claimIgnTitle: 'Claim / Link MLBB IGN',
+    claimIgnDesc: 'Link your Google/Squad account to your MLBB player profile to unlock 1-click queueing and personal highlights.',
+    quickJoinAsMyIgn: 'Quick Palista as',
+    linkMyIgnBtn: 'Link My IGN',
     teamBlueTitle: '🔵 Team Blue (First Pick)',
     teamRedTitle: '🔴 Team Red (Second Pick)',
     avgWrLabel: 'Avg Winrate',
@@ -328,6 +348,19 @@ const TRANSLATIONS = {
     autoBalanceBtn: 'Pantayin ang Lakas (WR)',
     shuffleAgainBtn: 'I-shuffle Ulit ang Kampihan',
     copy5v5Btn: 'Kopyahin ang 5v5',
+    exportLineupPosterBtn: 'I-export ang Lineup Poster',
+    viewModeRoster: 'Koponan (Blue vs Red)',
+    viewModeMatchup: 'Harapan sa Lane (Vs Mode)',
+    fairnessBalanced: 'Patas at Balanseng Laban',
+    fairnessImbalanced: 'Medyo Dehado ang Isang Team',
+    autoBalanceCurrentBtn: 'Pantayin ang Lakas (Equal WR)',
+    swapLaneBtn: 'Palitan sa Lane',
+    youBadge: 'IKAW',
+    yourRoleInMatch: 'Kasama ka sa laban na ito',
+    claimIgnTitle: 'I-link ang Aking MLBB IGN',
+    claimIgnDesc: 'Ikonekta ang iyong Google/Squad account sa iyong player profile para sa 1-click palista at personal stats.',
+    quickJoinAsMyIgn: 'Mabilis na Palista bilang',
+    linkMyIgnBtn: 'I-link ang IGN Ko',
     teamBlueTitle: '🔵 Team Blue (Unang Pili)',
     teamRedTitle: '🔴 Team Red (Pangalawang Pili)',
     avgWrLabel: 'Average na Winrate',
@@ -477,6 +510,9 @@ export default function App() {
     signingIn,
     authError,
     authErrorCode,
+    linkedIgn,
+    linkMyIgn,
+    unlinkMyIgn,
     signInWithGoogle,
     signInWithSquadAccount,
     signOut,
@@ -484,6 +520,10 @@ export default function App() {
   } = useAuth();
   const hasLoadedInitialCloudRef = useRef(false);
   const hasLoadedSupabaseRef = useRef(false);
+  const [matchViewMode, setMatchViewMode] = useState<'roster' | 'matchup'>('roster');
+  const [lineupPosterModalOpen, setLineupPosterModalOpen] = useState(false);
+  const [claimIgnModalOpen, setClaimIgnModalOpen] = useState(false);
+  const [claimIgnInput, setClaimIgnInput] = useState('');
   const [players, setPlayers] = useState<PlayerProfile[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.players);
@@ -1197,6 +1237,121 @@ export default function App() {
     triggerToast(t.toastSwapped);
   };
 
+  const handleAutoBalanceCurrentMatch = () => {
+    const result = autoBalanceCurrentParticipants(
+      liveMatch.teamBlue,
+      liveMatch.teamRed
+    );
+    setLiveMatch((prev) => ({
+      ...prev,
+      teamBlue: result.teamBlue,
+      teamRed: result.teamRed,
+      shuffleNote: `Auto-Balanced · Blue ${result.blueAvgWr}% vs Red ${result.redAvgWr}% (Δ ${result.diffWr}%)`,
+    }));
+    setSwapSelection(null);
+    triggerToast(
+      language === 'tl'
+        ? `Pantay na ang laban! Blue: ${result.blueAvgWr}% vs Red: ${result.redAvgWr}% (Agwat: ${result.diffWr}% na lang)`
+        : `Balanced! Blue: ${result.blueAvgWr}% vs Red: ${result.redAvgWr}% (Diff: ${result.diffWr}%)`
+    );
+  };
+
+  const handleSwapLaneOpponents = (laneIndex: number) => {
+    setLiveMatch((prev) => {
+      const nextBlue = [...prev.teamBlue];
+      const nextRed = [...prev.teamRed];
+      if (nextBlue[laneIndex] && nextRed[laneIndex]) {
+        const pBlue = { ...nextBlue[laneIndex] };
+        const pRed = { ...nextRed[laneIndex] };
+        const blueLane = pBlue.assignedLane;
+        const redLane = pRed.assignedLane;
+        nextBlue[laneIndex] = { ...pRed, assignedLane: blueLane };
+        nextRed[laneIndex] = { ...pBlue, assignedLane: redLane };
+      }
+      return {
+        ...prev,
+        teamBlue: nextBlue,
+        teamRed: nextRed,
+      };
+    });
+    triggerToast(
+      language === 'tl'
+        ? `Ipinagpalit ang magkatapat sa lane!`
+        : `Swapped lane opponents!`
+    );
+  };
+
+  const handleQuickJoinMyIgn = () => {
+    if (!linkedIgn) {
+      setClaimIgnModalOpen(true);
+      return;
+    }
+    const clean = linkedIgn.trim();
+    const existingIdx = slots.findIndex(
+      (s) => s && s.ign.toLowerCase() === clean.toLowerCase()
+    );
+    if (existingIdx !== -1) {
+      triggerToast(
+        language === 'tl'
+          ? `Nakalista ka na sa Slot #${existingIdx + 1} (${slots[existingIdx]?.roleLabel})!`
+          : `You are already queued in Slot #${existingIdx + 1}!`
+      );
+      return;
+    }
+    const profile = players.find(
+      (p) => p.ign.toLowerCase() === clean.toLowerCase()
+    );
+    const prefRole = profile?.primaryRole || 'Flex Role';
+    const secRole = profile?.secondaryRole;
+    const roleLabel =
+      profile?.roleLabel || formatRolePairText(prefRole, secRole);
+
+    const openIdx = slots.findIndex((s) => s === null);
+    if (openIdx === -1) {
+      triggerToast(t.toastSlotsFull);
+      return;
+    }
+
+    setSlots((prev) => {
+      const next = [...prev];
+      next[openIdx] = {
+        slotNumber: openIdx + 1,
+        ign: clean,
+        role: prefRole,
+        secondaryRole: secRole,
+        roleLabel,
+        isReady: true,
+        assignedAt: getCurrentTimeLabel(),
+      };
+      return next;
+    });
+
+    triggerToast(
+      language === 'tl'
+        ? `Nakalista ka na sa Slot #${openIdx + 1} bilang ${clean} (${roleLabel})!`
+        : `Queued in Slot #${openIdx + 1} as ${clean} (${roleLabel})!`
+    );
+  };
+
+  const handleRemoveMyIgnFromQueue = () => {
+    if (!linkedIgn) return;
+    const clean = linkedIgn.trim();
+    const slotIdx = slots.findIndex(
+      (s) => s && s.ign.toLowerCase() === clean.toLowerCase()
+    );
+    if (slotIdx === -1) return;
+    setSlots((prev) => {
+      const next = [...prev];
+      next[slotIdx] = null;
+      return next;
+    });
+    triggerToast(
+      language === 'tl'
+        ? `Inalis ka sa Slot #${slotIdx + 1}.`
+        : `Removed ${clean} from Slot #${slotIdx + 1}.`
+    );
+  };
+
   const compressImageFileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -1294,17 +1449,22 @@ export default function App() {
         }[];
       } | null = null;
 
+      let usedMethod: 'gemini' | 'ocr' = 'ocr';
+      let serverErrorNotice: string | null = null;
+
       try {
+        const payloadImages = compressedDataUrls.map((url) => ({
+          imageBase64: url,
+          mimeType: 'image/jpeg',
+        }));
+
         const res = await fetch('/api/scrim/analyze-screenshot', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             imageBase64: primaryDataUrl,
             mimeType: 'image/jpeg',
-            images: compressedDataUrls.map((url) => ({
-              imageBase64: url,
-              mimeType: 'image/jpeg',
-            })),
+            images: payloadImages,
             knownIgns,
           }),
         });
@@ -1320,10 +1480,20 @@ export default function App() {
               typeof serverData.blueKills === 'number')
           ) {
             data = serverData;
+            usedMethod = 'gemini';
+          }
+        } else {
+          try {
+            const errJson = await res.json();
+            if (errJson?.error) {
+              serverErrorNotice = errJson.error;
+            }
+          } catch {
+            serverErrorNotice = `HTTP ${res.status}`;
           }
         }
-      } catch {
-        // Server endpoint unreachable or unconfigured on external host; use client fallback below
+      } catch (err: unknown) {
+        serverErrorNotice = err instanceof Error ? err.message : 'Network error';
       }
 
       if (
@@ -1469,10 +1639,30 @@ export default function App() {
         setMatchDurationInput(String(data.duration));
       }
       setScannedDetectedWinner(detectedWinner);
-      triggerToast(t.toastScanSuccess);
-    } catch {
+      if (usedMethod === 'gemini') {
+        triggerToast(
+          language === 'tl'
+            ? '🤖 Tagumpay na na-scan ng Gemini Vision AI ang Battle Result!'
+            : '🤖 Battle Result successfully analyzed by Gemini Vision AI!'
+        );
+      } else if (serverErrorNotice) {
+        triggerToast(
+          language === 'tl'
+            ? `⚠️ Na-scan gamit ang On-Device OCR (${serverErrorNotice})`
+            : `⚠️ Scanned via On-Device OCR (${serverErrorNotice})`
+        );
+      } else {
+        triggerToast(t.toastScanSuccess);
+      }
+    } catch (err: unknown) {
+      console.error('Screenshot processing failed:', err);
+      const errMsg = err instanceof Error ? err.message : '';
       setScannedDetectedWinner('Blue');
-      triggerToast(t.toastScanSuccess);
+      triggerToast(
+        language === 'tl'
+          ? `May problema sa pagbasa ng screenshot${errMsg ? `: ${errMsg}` : ''}`
+          : `Failed to read screenshot${errMsg ? `: ${errMsg}` : ''}`
+      );
     } finally {
       setIsScanningScreenshot(false);
     }
@@ -1894,10 +2084,18 @@ export default function App() {
       );
     }
 
+    const isMySlot =
+      Boolean(linkedIgn) &&
+      slot.ign.toLowerCase() === linkedIgn!.toLowerCase();
+
     return (
       <div
         key={slotNum}
-        className="min-h-[52px] px-3 py-2 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800/90 flex items-center justify-between gap-2 overflow-hidden"
+        className={`min-h-[52px] px-3 py-2 rounded-xl border flex items-center justify-between gap-2 overflow-hidden transition ${
+          isMySlot
+            ? 'bg-cyan-500/10 dark:bg-cyan-950/30 border-cyan-500 ring-2 ring-cyan-500/50 shadow-xs'
+            : 'bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800/90'
+        }`}
       >
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <span
@@ -1910,8 +2108,13 @@ export default function App() {
             {slotNum}.
           </span>
           <div className="min-w-0 flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-0.5 sm:gap-2">
-            <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate min-w-0">
-              {slot.ign}
+            <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate min-w-0 flex items-center gap-1.5">
+              <span className="truncate">{slot.ign}</span>
+              {isMySlot && (
+                <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-[#00f2fe] text-[9px] font-mono font-bold shrink-0">
+                  ★ {t.youBadge}
+                </span>
+              )}
             </span>
             <RoleBadge role={slot.role} customLabel={slot.roleLabel} />
           </div>
@@ -2003,7 +2206,39 @@ export default function App() {
           </button>
         </nav>
 
-        <div className="flex items-center shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          {user ? (
+            <button
+              type="button"
+              onClick={() => setClaimIgnModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-800 text-xs font-medium text-slate-800 dark:text-slate-200 hover:border-cyan-500 cursor-pointer transition"
+              title="Click to claim or change your MLBB IGN"
+            >
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <span className="font-bold truncate max-w-[100px] sm:max-w-[130px]">
+                {linkedIgn || user.displayName || user.email?.split('@')[0]}
+              </span>
+              {linkedIgn ? (
+                <span className="text-[10px] font-mono text-cyan-600 dark:text-[#00f2fe] font-bold">
+                  ★
+                </span>
+              ) : (
+                <span className="text-[10px] text-amber-500 font-bold">
+                  (Link IGN)
+                </span>
+              )}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setActiveTab('settings')}
+              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-cyan-600 cursor-pointer"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>Sign In</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => handleCopyGcText('warmup')}
@@ -2102,6 +2337,104 @@ export default function App() {
                       {t.importBtn}
                     </button>
                   </div>
+                </div>
+              )}
+
+              {/* Member Quick Queue Bar (If Signed In) */}
+              {user ? (
+                <div className="p-3 rounded-xl bg-gradient-to-r from-cyan-500/10 via-blue-500/10 to-indigo-500/10 border border-cyan-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 flex items-center justify-center font-bold text-xs shrink-0">
+                      <UserCheck className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white truncate">
+                        <span>
+                          {linkedIgn
+                            ? `Naka-link: ${linkedIgn}`
+                            : user.displayName || user.email}
+                        </span>
+                        {linkedIgn && (
+                          <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-[#00f2fe] text-[9px] font-mono">
+                            VERIFIED SQUAD MEMBER
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                        {linkedIgn
+                          ? slots.some(
+                              (s) =>
+                                s &&
+                                s.ign.toLowerCase() ===
+                                  linkedIgn.toLowerCase()
+                            )
+                            ? `Nasa listahan ka na sa Slot #${
+                                slots.findIndex(
+                                  (s) =>
+                                    s &&
+                                    s.ign.toLowerCase() ===
+                                      linkedIgn.toLowerCase()
+                                ) + 1
+                              }!`
+                            : '1-click para pumasok sa palista gamit ang iyong IGN at saved roles.'
+                          : 'I-claim o i-link ang iyong MLBB IGN para mag-1-click palista at ma-highlight sa leaderboard!'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {linkedIgn ? (
+                      slots.some(
+                        (s) =>
+                          s &&
+                          s.ign.toLowerCase() === linkedIgn.toLowerCase()
+                      ) ? (
+                        <button
+                          type="button"
+                          onClick={handleRemoveMyIgnFromQueue}
+                          className="min-h-[36px] px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500 text-rose-600 dark:text-rose-400 hover:text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <span>Alisin Ako sa Slot</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleQuickJoinMyIgn}
+                          className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 text-xs font-bold hover:opacity-90 transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Zap className="w-3.5 h-3.5 fill-current shrink-0" />
+                          <span>1-Click Palista ({linkedIgn})</span>
+                        </button>
+                      )
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setClaimIgnModalOpen(true)}
+                        className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-[#f1c40f] text-slate-950 text-xs font-bold hover:bg-yellow-300 transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                        <span>I-link ang Aking IGN</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+                    <User className="w-4 h-4 text-cyan-600 dark:text-[#00f2fe]" />
+                    <span>
+                      {language === 'tl'
+                        ? 'Mag-sign in para mai-link ang iyong MLBB IGN at magkaroon ng 1-click palista!'
+                        : 'Sign in to link your MLBB IGN and unlock 1-click instant queueing!'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('settings')}
+                    className="px-3 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold hover:text-cyan-600 cursor-pointer shrink-0"
+                  >
+                    Sign In
+                  </button>
                 </div>
               )}
 
@@ -2410,6 +2743,14 @@ export default function App() {
                       <Copy className="w-3.5 h-3.5 shrink-0" />
                       <span className="truncate">{t.copy5v5Btn}</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setLineupPosterModalOpen(true)}
+                      className="min-h-[42px] px-2.5 sm:px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-display font-bold text-xs flex items-center justify-center gap-1.5 min-w-0 cursor-pointer shadow-xs"
+                    >
+                      <Share2 className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{t.exportLineupPosterBtn}</span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -2471,163 +2812,505 @@ export default function App() {
               </div>
             </section>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-              {/* TEAM BLUE */}
-              <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-cyan-500/40 dark:border-[#00f2fe]/35 space-y-3.5 shadow-xs overflow-hidden">
-                <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-3">
-                  <h3 className="text-base sm:text-lg font-display font-bold text-cyan-700 dark:text-[#00f2fe] truncate">
-                    {t.teamBlueTitle}
-                  </h3>
-                  <span className="font-mono tabular-nums text-xs text-slate-500 dark:text-slate-400 shrink-0">
-                    {t.avgWrLabel}: {blueTeamAvgWr.toFixed(1)}%
+            {/* MATCH FAIRNESS METER & WIN PREDICTION GAUGE */}
+            {(() => {
+              const winrateGap = Math.abs(blueTeamAvgWr - redTeamAvgWr);
+              const isImbalanced = winrateGap > 8;
+              const totalWr = Math.max(1, blueTeamAvgWr + redTeamAvgWr);
+              const blueChance = Math.round((blueTeamAvgWr / totalWr) * 100);
+              const redChance = 100 - blueChance;
+
+              const userInBlue =
+                linkedIgn &&
+                liveMatch.teamBlue.some(
+                  (p) => p.ign.toLowerCase() === linkedIgn.toLowerCase()
+                );
+              const userInRed =
+                linkedIgn &&
+                liveMatch.teamRed.some(
+                  (p) => p.ign.toLowerCase() === linkedIgn.toLowerCase()
+                );
+              const userMember = userInBlue
+                ? liveMatch.teamBlue.find(
+                    (p) => p.ign.toLowerCase() === linkedIgn!.toLowerCase()
+                  )
+                : userInRed
+                  ? liveMatch.teamRed.find(
+                      (p) => p.ign.toLowerCase() === linkedIgn!.toLowerCase()
+                    )
+                  : null;
+
+              return (
+                <div className="space-y-3">
+                  {/* Signed-in User Match Status Banner */}
+                  {userMember && (
+                    <div className="p-3 rounded-xl bg-gradient-to-r from-cyan-500/15 via-blue-500/15 to-purple-500/15 border border-cyan-500/35 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-cyan-500 text-slate-950 flex items-center justify-center font-bold text-xs">
+                          ★
+                        </div>
+                        <div className="text-xs">
+                          <span className="font-bold text-slate-900 dark:text-white">
+                            {t.yourRoleInMatch}:
+                          </span>{' '}
+                          <span
+                            className={
+                              userInBlue
+                                ? 'text-cyan-600 dark:text-[#00f2fe] font-bold'
+                                : 'text-rose-500 font-bold'
+                            }
+                          >
+                            {userInBlue ? 'Team Blue' : 'Team Red'} (
+                            {ROLE_META[userMember.assignedLane].gcLabel})
+                          </span>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-700 dark:text-[#00f2fe] text-[10px] font-mono font-bold">
+                        {t.youBadge} ({userMember.ign})
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Fairness & Auto-Balance Bar */}
+                  <div
+                    className={`p-3.5 sm:p-4 rounded-2xl border transition ${
+                      isImbalanced
+                        ? 'bg-amber-500/10 border-amber-500/35'
+                        : 'bg-emerald-500/10 border-emerald-500/35'
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Scale
+                            className={`w-4 h-4 ${
+                              isImbalanced
+                                ? 'text-amber-500'
+                                : 'text-emerald-500'
+                            }`}
+                          />
+                          <span className="font-display font-bold text-xs sm:text-sm text-slate-900 dark:text-white">
+                            {isImbalanced
+                              ? t.fairnessImbalanced
+                              : t.fairnessBalanced}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold ${
+                              isImbalanced
+                                ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                                : 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+                            }`}
+                          >
+                            Δ {winrateGap.toFixed(1)}% WR
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                          {isImbalanced
+                            ? language === 'tl'
+                              ? `May ${winrateGap.toFixed(1)}% agwat sa average winrate. Pindutin ang Auto-Balance para pumantay ang lakas ng parehong koponan!`
+                              : `Disparity of ${winrateGap.toFixed(1)}% WR detected. Tap Auto-Balance to equalize team power while keeping valid lane roles!`
+                            : language === 'tl'
+                              ? `Patas at balanseng 5v5 match para sa competitive squad scrim.`
+                              : `Well-balanced 5v5 lineup for fair and competitive squad scrim.`}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleAutoBalanceCurrentMatch}
+                        className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] hover:opacity-90 text-white dark:text-slate-950 font-display font-bold text-xs flex items-center justify-center gap-1.5 shrink-0 shadow-xs cursor-pointer"
+                      >
+                        <Zap className="w-3.5 h-3.5 fill-current" />
+                        <span>{t.autoBalanceCurrentBtn}</span>
+                      </button>
+                    </div>
+
+                    {/* Esports Win Probability Bar */}
+                    <div className="mt-3 pt-2.5 border-t border-slate-200/60 dark:border-slate-800/60 space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-mono font-bold">
+                        <span className="text-cyan-700 dark:text-[#00f2fe]">
+                          🔵 Blue {blueChance}% (Avg WR: {blueTeamAvgWr.toFixed(1)}%)
+                        </span>
+                        <span className="text-xs text-slate-400">
+                          ⚔️ Win Prediction
+                        </span>
+                        <span className="text-rose-600 dark:text-rose-400">
+                          🔴 Red {redChance}% (Avg WR: {redTeamAvgWr.toFixed(1)}%)
+                        </span>
+                      </div>
+                      <div className="h-2 w-full bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden flex">
+                        <div
+                          className="bg-cyan-500 transition-all duration-300"
+                          style={{ width: `${blueChance}%` }}
+                        />
+                        <div
+                          className="bg-rose-500 transition-all duration-300"
+                          style={{ width: `${redChance}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* View Mode Switcher: Rosters vs Head-to-Head Lane Matchups */}
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setMatchViewMode('roster')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                          matchViewMode === 'roster'
+                            ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                      >
+                        <Users className="w-3.5 h-3.5" />
+                        <span>{t.viewModeRoster}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMatchViewMode('matchup')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                          matchViewMode === 'matchup'
+                            ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                      >
+                        <Swords className="w-3.5 h-3.5" />
+                        <span>{t.viewModeMatchup}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* LANE MATCHUP VS VIEW OR ROSTER VIEW */}
+            {matchViewMode === 'matchup' ? (
+              <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 space-y-3.5 shadow-xs overflow-hidden">
+                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Swords className="w-4 h-4 text-[#f1c40f]" />
+                    <h3 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white">
+                      {language === 'tl'
+                        ? 'Harapan sa Bawat Lane (Lane by Lane Matchup)'
+                        : 'Head-to-Head Lane Matchups'}
+                    </h3>
+                  </div>
+                  <span className="text-xs font-mono text-slate-500">
+                    5 MLBB Positions
                   </span>
                 </div>
 
-                <div className="space-y-2">
-                  {liveMatch.teamBlue.map((member, idx) => {
-                    const isSwapping =
-                      swapSelection?.team === 'Blue' &&
-                      swapSelection?.index === idx;
+                <div className="space-y-2.5">
+                  {CORE_FIVE_ROLES.map((lane, laneIdx) => {
+                    const bluePlayer = liveMatch.teamBlue[laneIdx];
+                    const redPlayer = liveMatch.teamRed[laneIdx];
+                    if (!bluePlayer || !redPlayer) return null;
+
+                    const wrDiff = Number(
+                      (bluePlayer.winrateSnapshot - redPlayer.winrateSnapshot).toFixed(1)
+                    );
+                    const isBlueFavored = wrDiff > 3;
+                    const isRedFavored = wrDiff < -3;
+
+                    const isUserBlue =
+                      linkedIgn &&
+                      bluePlayer.ign.toLowerCase() === linkedIgn.toLowerCase();
+                    const isUserRed =
+                      linkedIgn &&
+                      redPlayer.ign.toLowerCase() === linkedIgn.toLowerCase();
+
                     return (
                       <div
-                        key={idx}
-                        className={`p-2.5 sm:p-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border flex items-center justify-between gap-2 overflow-hidden ${
-                          isSwapping
-                            ? 'border-cyan-600 dark:border-[#00f2fe] ring-1 ring-cyan-600 dark:ring-[#00f2fe]'
-                            : 'border-slate-200 dark:border-slate-800'
-                        }`}
+                        key={lane}
+                        className="p-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3"
                       >
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        {/* Blue Side */}
+                        <div
+                          className={`flex items-center gap-2.5 flex-1 min-w-0 p-2 rounded-lg ${
+                            isUserBlue
+                              ? 'bg-cyan-500/10 ring-1 ring-cyan-500'
+                              : ''
+                          }`}
+                        >
                           <div
-                            className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg border flex items-center justify-center shrink-0 ${ROLE_META[member.assignedLane].bgSubtleClass} ${ROLE_META[member.assignedLane].borderClass} ${ROLE_META[member.assignedLane].textClass}`}
+                            className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${ROLE_META[bluePlayer.assignedLane].bgSubtleClass} ${ROLE_META[bluePlayer.assignedLane].borderClass} ${ROLE_META[bluePlayer.assignedLane].textClass}`}
                           >
                             <RoleIcon
-                              role={member.assignedLane}
+                              role={bluePlayer.assignedLane}
                               className="w-4 h-4"
                             />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
-                              {member.ign}{' '}
-                              <span className="text-[11px] font-mono font-normal text-slate-500 dark:text-slate-400">
-                                ({member.roleLabel})
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                              <span
-                                className={`text-[11px] sm:text-xs font-mono truncate ${ROLE_META[member.assignedLane].textClass}`}
-                              >
-                                {t.assignedLabel}:{' '}
-                                {ROLE_META[member.assignedLane].gcLabel}
-                              </span>
-                              {member.kda && (
-                                <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-[10px] font-mono font-bold text-cyan-700 dark:text-[#00f2fe]">
-                                  {member.kda}
-                                  {member.rating ? ` · ${member.rating}` : ''}
+                            <div className="flex items-center gap-1.5 font-bold text-xs sm:text-sm text-cyan-700 dark:text-[#00f2fe] truncate">
+                              <span className="truncate">{bluePlayer.ign}</span>
+                              {isUserBlue && (
+                                <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-[#00f2fe] text-[9px] font-mono font-bold">
+                                  ★ {t.youBadge}
                                 </span>
                               )}
+                            </div>
+                            <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                              WR:{' '}
+                              <span className="font-bold text-slate-700 dark:text-slate-200">
+                                {bluePlayer.winrateSnapshot}%
+                              </span>
+                              {bluePlayer.kda && ` · ${bluePlayer.kda}`}
                             </div>
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleSwapParticipant('Blue', idx)}
-                          className={`min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 shrink-0 max-w-[125px] sm:max-w-none cursor-pointer ${
-                            isSwapping
-                              ? 'bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold'
-                              : 'bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                        {/* Center VS & Swap Opponents */}
+                        <div className="flex md:flex-col items-center justify-center gap-2 px-3 py-1 shrink-0 border-y md:border-y-0 md:border-x border-slate-200 dark:border-slate-800">
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-[10px] font-display font-bold text-slate-700 dark:text-slate-300">
+                              {ROLE_META[lane].gcLabel}
+                            </span>
+                            <span
+                              className={`text-[10px] font-mono font-bold ${
+                                isBlueFavored
+                                  ? 'text-cyan-600 dark:text-[#00f2fe]'
+                                  : isRedFavored
+                                    ? 'text-rose-600 dark:text-rose-400'
+                                    : 'text-slate-400'
+                              }`}
+                            >
+                              {isBlueFavored
+                                ? `Blue +${wrDiff}%`
+                                : isRedFavored
+                                  ? `Red +${Math.abs(wrDiff)}%`
+                                  : 'Even'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleSwapLaneOpponents(laneIdx)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 hover:bg-cyan-500 hover:text-slate-950 text-slate-700 dark:text-slate-300 text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                            title="Swap lane opponents"
+                          >
+                            <ArrowLeftRight className="w-3 h-3" />
+                            <span>{t.swapLaneBtn}</span>
+                          </button>
+                        </div>
+
+                        {/* Red Side */}
+                        <div
+                          className={`flex items-center gap-2.5 flex-1 min-w-0 p-2 rounded-lg justify-end md:text-right ${
+                            isUserRed ? 'bg-rose-500/10 ring-1 ring-rose-500' : ''
                           }`}
                         >
-                          <ArrowLeftRight className="w-3 h-3 shrink-0" />
-                          <span className="truncate">
-                            {isSwapping ? t.selectTargetBtn : t.swapBtn}
-                          </span>
-                        </button>
+                          <div className="min-w-0 flex-1 md:order-1 order-2">
+                            <div className="flex items-center md:justify-end gap-1.5 font-bold text-xs sm:text-sm text-rose-600 dark:text-rose-400 truncate">
+                              {isUserRed && (
+                                <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-600 dark:text-rose-400 text-[9px] font-mono font-bold">
+                                  ★ {t.youBadge}
+                                </span>
+                              )}
+                              <span className="truncate">{redPlayer.ign}</span>
+                            </div>
+                            <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                              {redPlayer.kda && `${redPlayer.kda} · `}
+                              WR:{' '}
+                              <span className="font-bold text-slate-700 dark:text-slate-200">
+                                {redPlayer.winrateSnapshot}%
+                              </span>
+                            </div>
+                          </div>
+                          <div
+                            className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 md:order-2 order-1 ${ROLE_META[redPlayer.assignedLane].bgSubtleClass} ${ROLE_META[redPlayer.assignedLane].borderClass} ${ROLE_META[redPlayer.assignedLane].textClass}`}
+                          >
+                            <RoleIcon
+                              role={redPlayer.assignedLane}
+                              className="w-4 h-4"
+                            />
+                          </div>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
               </section>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+                {/* TEAM BLUE */}
+                <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-cyan-500/40 dark:border-[#00f2fe]/35 space-y-3.5 shadow-xs overflow-hidden">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-3">
+                    <h3 className="text-base sm:text-lg font-display font-bold text-cyan-700 dark:text-[#00f2fe] truncate">
+                      {t.teamBlueTitle}
+                    </h3>
+                    <span className="font-mono tabular-nums text-xs text-slate-500 dark:text-slate-400 shrink-0">
+                      {t.avgWrLabel}: {blueTeamAvgWr.toFixed(1)}%
+                    </span>
+                  </div>
 
-              {/* TEAM RED */}
-              <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-rose-500/40 dark:border-rose-500/35 space-y-3.5 shadow-xs overflow-hidden">
-                <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-3">
-                  <h3 className="text-base sm:text-lg font-display font-bold text-rose-600 dark:text-rose-400 truncate">
-                    {t.teamRedTitle}
-                  </h3>
-                  <span className="font-mono tabular-nums text-xs text-slate-500 dark:text-slate-400 shrink-0">
-                    {t.avgWrLabel}: {redTeamAvgWr.toFixed(1)}%
-                  </span>
-                </div>
+                  <div className="space-y-2">
+                    {liveMatch.teamBlue.map((member, idx) => {
+                      const isSwapping =
+                        swapSelection?.team === 'Blue' &&
+                        swapSelection?.index === idx;
+                      const isUser =
+                        linkedIgn &&
+                        member.ign.toLowerCase() === linkedIgn.toLowerCase();
 
-                <div className="space-y-2">
-                  {liveMatch.teamRed.map((member, idx) => {
-                    const isSwapping =
-                      swapSelection?.team === 'Red' &&
-                      swapSelection?.index === idx;
-                    return (
-                      <div
-                        key={idx}
-                        className={`p-2.5 sm:p-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border flex items-center justify-between gap-2 overflow-hidden ${
-                          isSwapping
-                            ? 'border-rose-500 ring-1 ring-rose-500'
-                            : 'border-slate-200 dark:border-slate-800'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <div
-                            className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg border flex items-center justify-center shrink-0 ${ROLE_META[member.assignedLane].bgSubtleClass} ${ROLE_META[member.assignedLane].borderClass} ${ROLE_META[member.assignedLane].textClass}`}
-                          >
-                            <RoleIcon
-                              role={member.assignedLane}
-                              className="w-4 h-4"
-                            />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
-                              {member.ign}{' '}
-                              <span className="text-[11px] font-mono font-normal text-slate-500 dark:text-slate-400">
-                                ({member.roleLabel})
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                              <span
-                                className={`text-[11px] sm:text-xs font-mono truncate ${ROLE_META[member.assignedLane].textClass}`}
-                              >
-                                {t.assignedLabel}:{' '}
-                                {ROLE_META[member.assignedLane].gcLabel}
-                              </span>
-                              {member.kda && (
-                                <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-[10px] font-mono font-bold text-rose-600 dark:text-rose-400">
-                                  {member.kda}
-                                  {member.rating ? ` · ${member.rating}` : ''}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => handleSwapParticipant('Red', idx)}
-                          className={`min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 shrink-0 max-w-[125px] sm:max-w-none cursor-pointer ${
+                      return (
+                        <div
+                          key={idx}
+                          className={`p-2.5 sm:p-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border flex items-center justify-between gap-2 overflow-hidden transition ${
                             isSwapping
-                              ? 'bg-rose-500 text-white font-bold'
-                              : 'bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                              ? 'border-cyan-600 dark:border-[#00f2fe] ring-1 ring-cyan-600 dark:ring-[#00f2fe]'
+                              : isUser
+                                ? 'border-cyan-500 ring-2 ring-cyan-500/50 bg-cyan-500/5'
+                                : 'border-slate-200 dark:border-slate-800'
                           }`}
                         >
-                          <ArrowLeftRight className="w-3 h-3 shrink-0" />
-                          <span className="truncate">
-                            {isSwapping ? t.selectTargetBtn : t.swapBtn}
-                          </span>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-            </div>
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <div
+                              className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg border flex items-center justify-center shrink-0 ${ROLE_META[member.assignedLane].bgSubtleClass} ${ROLE_META[member.assignedLane].borderClass} ${ROLE_META[member.assignedLane].textClass}`}
+                            >
+                              <RoleIcon
+                                role={member.assignedLane}
+                                className="w-4 h-4"
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
+                                <span className="truncate">{member.ign}</span>
+                                {isUser && (
+                                  <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-[#00f2fe] text-[9px] font-mono font-bold">
+                                    ★ {t.youBadge}
+                                  </span>
+                                )}
+                                <span className="text-[11px] font-mono font-normal text-slate-500 dark:text-slate-400">
+                                  ({member.roleLabel})
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                <span
+                                  className={`text-[11px] sm:text-xs font-mono truncate ${ROLE_META[member.assignedLane].textClass}`}
+                                >
+                                  {t.assignedLabel}:{' '}
+                                  {ROLE_META[member.assignedLane].gcLabel}
+                                </span>
+                                {member.kda && (
+                                  <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-[10px] font-mono font-bold text-cyan-700 dark:text-[#00f2fe]">
+                                    {member.kda}
+                                    {member.rating ? ` · ${member.rating}` : ''}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleSwapParticipant('Blue', idx)}
+                            className={`min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 shrink-0 max-w-[125px] sm:max-w-none cursor-pointer ${
+                              isSwapping
+                                ? 'bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold'
+                                : 'bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            <ArrowLeftRight className="w-3 h-3 shrink-0" />
+                            <span className="truncate">
+                              {isSwapping ? t.selectTargetBtn : t.swapBtn}
+                            </span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                {/* TEAM RED */}
+                <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-rose-500/40 dark:border-rose-500/35 space-y-3.5 shadow-xs overflow-hidden">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-3">
+                    <h3 className="text-base sm:text-lg font-display font-bold text-rose-600 dark:text-rose-400 truncate">
+                      {t.teamRedTitle}
+                    </h3>
+                    <span className="font-mono tabular-nums text-xs text-slate-500 dark:text-slate-400 shrink-0">
+                      {t.avgWrLabel}: {redTeamAvgWr.toFixed(1)}%
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {liveMatch.teamRed.map((member, idx) => {
+                      const isSwapping =
+                        swapSelection?.team === 'Red' &&
+                        swapSelection?.index === idx;
+                      const isUser =
+                        linkedIgn &&
+                        member.ign.toLowerCase() === linkedIgn.toLowerCase();
+
+                      return (
+                        <div
+                          key={idx}
+                          className={`p-2.5 sm:p-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border flex items-center justify-between gap-2 overflow-hidden transition ${
+                            isSwapping
+                              ? 'border-rose-500 ring-1 ring-rose-500'
+                              : isUser
+                                ? 'border-rose-500 ring-2 ring-rose-500/50 bg-rose-500/5'
+                                : 'border-slate-200 dark:border-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <div
+                              className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg border flex items-center justify-center shrink-0 ${ROLE_META[member.assignedLane].bgSubtleClass} ${ROLE_META[member.assignedLane].borderClass} ${ROLE_META[member.assignedLane].textClass}`}
+                            >
+                              <RoleIcon
+                                role={member.assignedLane}
+                                className="w-4 h-4"
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
+                                <span className="truncate">{member.ign}</span>
+                                {isUser && (
+                                  <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-600 dark:text-rose-400 text-[9px] font-mono font-bold">
+                                    ★ {t.youBadge}
+                                  </span>
+                                )}
+                                <span className="text-[11px] font-mono font-normal text-slate-500 dark:text-slate-400">
+                                  ({member.roleLabel})
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                <span
+                                  className={`text-[11px] sm:text-xs font-mono truncate ${ROLE_META[member.assignedLane].textClass}`}
+                                >
+                                  {t.assignedLabel}:{' '}
+                                  {ROLE_META[member.assignedLane].gcLabel}
+                                </span>
+                                {member.kda && (
+                                  <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-[10px] font-mono font-bold text-rose-600 dark:text-rose-400">
+                                    {member.kda}
+                                    {member.rating ? ` · ${member.rating}` : ''}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleSwapParticipant('Red', idx)}
+                            className={`min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 shrink-0 max-w-[125px] sm:max-w-none cursor-pointer ${
+                              isSwapping
+                                ? 'bg-rose-500 text-white font-bold'
+                                : 'bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            <ArrowLeftRight className="w-3 h-3 shrink-0" />
+                            <span className="truncate">
+                              {isSwapping ? t.selectTargetBtn : t.swapBtn}
+                            </span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              </div>
+            )}
 
             {/* Record Battle Result (Screenshot Auto-Reader + MVP/SVP + Kill Score + Winner) */}
             <section className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs overflow-hidden">
@@ -3095,6 +3778,55 @@ export default function App() {
               </div>
             )}
 
+            {/* Signed-in User Standings Spotlight */}
+            {linkedIgn && (() => {
+              const myRankIdx = sortedLeaderboard.findIndex(
+                (p) => p.ign.toLowerCase() === linkedIgn.toLowerCase()
+              );
+              if (myRankIdx === -1) return null;
+              const myProfile = sortedLeaderboard[myRankIdx];
+              return (
+                <div className="p-3 sm:p-3.5 rounded-xl bg-gradient-to-r from-cyan-500/15 via-blue-500/10 to-amber-500/15 border border-cyan-500/40 flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 flex items-center justify-center font-bold text-xs shrink-0">
+                      #{myRankIdx + 1}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
+                        <span>
+                          {language === 'tl'
+                            ? 'Iyong Standing sa NGD'
+                            : 'Your NGD Leaderboard Standing'}
+                          :
+                        </span>
+                        <span className="text-cyan-700 dark:text-[#00f2fe]">
+                          {myProfile.ign}
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-700 dark:text-[#00f2fe] text-[9px] font-mono">
+                          ★ {t.youBadge}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Rank #{myRankIdx + 1} of {sortedLeaderboard.length} clan players
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2.5 text-xs font-mono font-bold">
+                    <span className="px-2 py-1 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
+                      {myProfile.wins}W - {myProfile.losses}L
+                    </span>
+                    <span className="px-2 py-1 rounded-md bg-amber-500/15 text-amber-700 dark:text-[#f1c40f]">
+                      👑 {myProfile.mvpCount} MVPs
+                    </span>
+                    <span className="px-2 py-1 rounded-md bg-cyan-500/15 text-cyan-700 dark:text-[#00f2fe]">
+                      {calcWinrate(myProfile.wins, myProfile.losses)}% WR
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+
             <div className="w-full overflow-x-auto">
               <table className="w-full table-fixed sm:table-auto text-left border-collapse">
                 <thead>
@@ -3137,16 +3869,31 @@ export default function App() {
                     sortedLeaderboard.map((player, idx) => {
                       const total = player.wins + player.losses;
                       const wr = calcWinrate(player.wins, player.losses);
+                      const isMyRow =
+                        Boolean(linkedIgn) &&
+                        player.ign.toLowerCase() === linkedIgn!.toLowerCase();
+
                       return (
                         <tr
                           key={`${player.id}-${player.ign}-${idx}`}
-                          className="hover:bg-slate-50 dark:hover:bg-slate-800/30"
+                          className={`transition ${
+                            isMyRow
+                              ? 'bg-cyan-500/10 dark:bg-cyan-950/30 hover:bg-cyan-500/15 ring-1 ring-cyan-500'
+                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'
+                          }`}
                         >
                           <td className="py-2.5 px-1 sm:px-2 font-mono tabular-nums text-xs font-bold text-amber-600 dark:text-[#f1c40f]">
                             #{idx + 1}
                           </td>
                           <td className="py-2.5 px-1 sm:px-2 font-bold text-slate-900 dark:text-white min-w-0">
-                            <div className="truncate">{player.ign}</div>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="truncate">{player.ign}</span>
+                              {isMyRow && (
+                                <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-[#00f2fe] text-[9px] font-mono font-bold shrink-0">
+                                  ★ {t.youBadge}
+                                </span>
+                              )}
+                            </div>
                             <div className="sm:hidden mt-0.5 min-w-0">
                               <RoleBadge
                                 role={player.primaryRole}
@@ -3766,6 +4513,139 @@ export default function App() {
           </span>
         </button>
       </nav>
+
+      {/* Pre-Match Lineup Poster Modal */}
+      {lineupPosterModalOpen && (
+        <MatchPosterModal
+          match={{
+            id: liveMatch.matchId || 'CUSTOM-5V5-LINEUP',
+            roomName: liveMatch.roomName || 'Custom 5v5 Scrim',
+            completedAt: liveMatch.startedAt || 'Now',
+            winner: 'Blue',
+            teamBlue: liveMatch.teamBlue,
+            teamRed: liveMatch.teamRed,
+            mvpIgn: liveMatch.mvpIgn || liveMatch.teamBlue[0]?.ign || 'Player',
+            durationText: liveMatch.seriesFormat || 'BO1',
+            blueAvgWr: blueTeamAvgWr,
+            redAvgWr: redTeamAvgWr,
+          }}
+          onClose={() => setLineupPosterModalOpen(false)}
+        />
+      )}
+
+      {/* Claim / Link MLBB IGN Modal */}
+      {claimIgnModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-5 sm:p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-600 dark:text-[#00f2fe] flex items-center justify-center font-bold">
+                  <UserCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-display font-bold text-slate-900 dark:text-white">
+                    {t.claimIgnTitle}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {user?.email || 'Naka-login'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setClaimIgnModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-white text-lg p-1 cursor-pointer"
+              >
+                ×
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              {t.claimIgnDesc}
+            </p>
+
+            {/* Quick Pick from Existing Squad Roster */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
+                Pumili sa Squad Roster o Mag-type:
+              </label>
+              <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800">
+                {players.slice(0, 20).map((p) => (
+                  <button
+                    key={p.ign}
+                    type="button"
+                    onClick={() => setClaimIgnInput(p.ign)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      claimIgnInput.toLowerCase() === p.ign.toLowerCase()
+                        ? 'bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold'
+                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-cyan-500'
+                    }`}
+                  >
+                    {p.ign} ({ROLE_META[p.primaryRole]?.shortLabel || 'FLEX'})
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Input custom IGN */}
+            <div className="space-y-1">
+              <label className="block text-xs font-mono text-slate-600 dark:text-slate-400">
+                O i-type ang MLBB IGN mo:
+              </label>
+              <input
+                type="text"
+                value={claimIgnInput}
+                onChange={(e) => setClaimIgnInput(e.target.value)}
+                placeholder="hal. joshy, Setsuko, LUX..."
+                className="w-full h-10 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-sm font-bold text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              {linkedIgn ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    unlinkMyIgn();
+                    setClaimIgnInput('');
+                    setClaimIgnModalOpen(false);
+                    triggerToast('Na-unlink na ang IGN.');
+                  }}
+                  className="px-3 py-2 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500 hover:text-white text-xs font-bold transition cursor-pointer"
+                >
+                  I-unlink
+                </button>
+              ) : (
+                <div />
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setClaimIgnModalOpen(false)}
+                  className="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold cursor-pointer"
+                >
+                  {t.cancelBtn}
+                </button>
+                <button
+                  type="button"
+                  disabled={!claimIgnInput.trim()}
+                  onClick={() => {
+                    const clean = claimIgnInput.trim();
+                    if (!clean) return;
+                    linkMyIgn(clean);
+                    setClaimIgnModalOpen(false);
+                    triggerToast(`Nai-link na ang ${clean} sa iyong account!`);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 text-xs font-bold hover:opacity-90 transition disabled:opacity-50 cursor-pointer shadow-xs"
+                >
+                  I-save ang IGN
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

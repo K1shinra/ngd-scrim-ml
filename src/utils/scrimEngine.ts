@@ -349,6 +349,130 @@ export function buildDirectLineup5v5(
   };
 }
 
+export function autoBalanceCurrentParticipants(
+  currentBlue: MatchParticipant[],
+  currentRed: MatchParticipant[]
+): {
+  teamBlue: MatchParticipant[];
+  teamRed: MatchParticipant[];
+  blueAvgWr: number;
+  redAvgWr: number;
+  diffWr: number;
+} {
+  const all10 = [...currentBlue, ...currentRed];
+  if (all10.length !== 10) {
+    const bWr =
+      currentBlue.length > 0
+        ? currentBlue.reduce((a, b) => a + b.winrateSnapshot, 0) /
+          currentBlue.length
+        : 0;
+    const rWr =
+      currentRed.length > 0
+        ? currentRed.reduce((a, b) => a + b.winrateSnapshot, 0) /
+          currentRed.length
+        : 0;
+    return {
+      teamBlue: currentBlue,
+      teamRed: currentRed,
+      blueAvgWr: Number(bWr.toFixed(1)),
+      redAvgWr: Number(rWr.toFixed(1)),
+      diffWr: Number(Math.abs(bWr - rWr).toFixed(1)),
+    };
+  }
+
+  // Generate all 252 5-combinations of [0..9]
+  const combinations: number[][] = [];
+  function combine(start: number, chosen: number[]) {
+    if (chosen.length === 5) {
+      combinations.push([...chosen]);
+      return;
+    }
+    for (let i = start; i < 10; i++) {
+      chosen.push(i);
+      combine(i + 1, chosen);
+      chosen.pop();
+    }
+  }
+  combine(0, []);
+
+  const assign5ToLanes = (
+    players5: MatchParticipant[]
+  ): { assigned: MatchParticipant[]; penalty: number } => {
+    const roles = CORE_FIVE_ROLES;
+    const assigned: (MatchParticipant | null)[] = [null, null, null, null, null];
+    const unassigned: MatchParticipant[] = [];
+    let penalty = 0;
+
+    for (const p of players5) {
+      const prefIdx = roles.indexOf(p.selectedRole);
+      const secIdx = p.secondaryRole ? roles.indexOf(p.secondaryRole) : -1;
+
+      if (prefIdx !== -1 && assigned[prefIdx] === null) {
+        assigned[prefIdx] = { ...p, assignedLane: roles[prefIdx] };
+      } else if (secIdx !== -1 && assigned[secIdx] === null) {
+        assigned[secIdx] = { ...p, assignedLane: roles[secIdx] };
+        penalty += 2;
+      } else {
+        unassigned.push(p);
+      }
+    }
+
+    for (let r = 0; r < 5; r++) {
+      if (assigned[r] === null) {
+        const next = unassigned.pop();
+        if (next) {
+          assigned[r] = { ...next, assignedLane: roles[r] };
+          penalty += 8;
+        }
+      }
+    }
+
+    return {
+      assigned: assigned.filter((p): p is MatchParticipant => p !== null),
+      penalty,
+    };
+  };
+
+  let bestBlue: MatchParticipant[] = currentBlue;
+  let bestRed: MatchParticipant[] = currentRed;
+  let bestTotalScore = Infinity;
+
+  for (const combo of combinations) {
+    const blueCand = combo.map((i) => all10[i]);
+    const redCand = all10.filter((_, i) => !combo.includes(i));
+
+    const blueWr = blueCand.reduce((a, b) => a + b.winrateSnapshot, 0) / 5;
+    const redWr = redCand.reduce((a, b) => a + b.winrateSnapshot, 0) / 5;
+    const diff = Math.abs(blueWr - redWr);
+
+    const bAssign = assign5ToLanes(blueCand);
+    const rAssign = assign5ToLanes(redCand);
+
+    const score = diff * 2.5 + bAssign.penalty + rAssign.penalty;
+
+    if (score < bestTotalScore) {
+      bestTotalScore = score;
+      bestBlue = bAssign.assigned;
+      bestRed = rAssign.assigned;
+    }
+  }
+
+  const blueAvgWr = Number(
+    (bestBlue.reduce((a, b) => a + b.winrateSnapshot, 0) / 5).toFixed(1)
+  );
+  const redAvgWr = Number(
+    (bestRed.reduce((a, b) => a + b.winrateSnapshot, 0) / 5).toFixed(1)
+  );
+
+  return {
+    teamBlue: bestBlue,
+    teamRed: bestRed,
+    blueAvgWr,
+    redAvgWr,
+    diffWr: Number(Math.abs(blueAvgWr - redAvgWr).toFixed(1)),
+  };
+}
+
 export function parseTraditionalGcText(
   rawText: string
 ): { slotNum: number; ign: string; role: MlbbRole; secondaryRole?: MlbbRole; roleLabel: string }[] {

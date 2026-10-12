@@ -13,6 +13,7 @@ export interface AppUser {
   displayName: string | null;
   photoURL?: string | null;
   authMethod?: 'google' | 'squad_account';
+  linkedIgn?: string | null;
 }
 
 interface AuthContextValue {
@@ -22,17 +23,22 @@ interface AuthContextValue {
   signingIn: boolean;
   authError: string | null;
   authErrorCode: string | null;
+  linkedIgn: string | null;
+  linkMyIgn: (ign: string) => void;
+  unlinkMyIgn: () => void;
   clearAuthError: () => void;
   signInWithGoogle: () => Promise<{ ok: boolean; error?: string; code?: string }>;
   signInWithSquadAccount: (params: {
     displayName: string;
     email: string;
+    linkedIgn?: string;
   }) => void;
   signOut: () => Promise<void>;
   getFreshToken: () => Promise<string | null>;
 }
 
 const SQUAD_ACCOUNT_STORAGE_KEY = 'ngd_scrim_squad_user_v1';
+const LINKED_IGN_PREFIX = 'ngd_linked_ign_';
 
 const AuthContext = createContext<AuthContextValue>({
   user: null,
@@ -41,6 +47,9 @@ const AuthContext = createContext<AuthContextValue>({
   signingIn: false,
   authError: null,
   authErrorCode: null,
+  linkedIgn: null,
+  linkMyIgn: () => {},
+  unlinkMyIgn: () => {},
   clearAuthError: () => {},
   signInWithGoogle: async () => ({ ok: false }),
   signInWithSquadAccount: () => {},
@@ -70,6 +79,69 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [signingIn, setSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authErrorCode, setAuthErrorCode] = useState<string | null>(null);
+  const [linkedIgn, setLinkedIgn] = useState<string | null>(null);
+
+  // Sync linkedIgn when user changes
+  useEffect(() => {
+    const email = firebaseUser?.email || fallbackUser?.email;
+    if (email) {
+      try {
+        const saved = localStorage.getItem(`${LINKED_IGN_PREFIX}${email.toLowerCase()}`);
+        if (saved) {
+          setLinkedIgn(saved);
+          return;
+        }
+      } catch {
+        // Ignore storage error
+      }
+    }
+    // If fallbackUser has linkedIgn
+    if (fallbackUser?.linkedIgn) {
+      setLinkedIgn(fallbackUser.linkedIgn);
+    } else {
+      setLinkedIgn(null);
+    }
+  }, [firebaseUser, fallbackUser]);
+
+  const linkMyIgn = (ign: string) => {
+    const clean = ign.trim();
+    if (!clean) return;
+    setLinkedIgn(clean);
+    const email = firebaseUser?.email || fallbackUser?.email;
+    if (email) {
+      try {
+        localStorage.setItem(`${LINKED_IGN_PREFIX}${email.toLowerCase()}`, clean);
+      } catch {
+        // Ignore storage error
+      }
+    }
+    if (fallbackUser) {
+      const updated = { ...fallbackUser, linkedIgn: clean };
+      setFallbackUser(updated);
+      try {
+        localStorage.setItem(SQUAD_ACCOUNT_STORAGE_KEY, JSON.stringify(updated));
+      } catch {}
+    }
+  };
+
+  const unlinkMyIgn = () => {
+    setLinkedIgn(null);
+    const email = firebaseUser?.email || fallbackUser?.email;
+    if (email) {
+      try {
+        localStorage.removeItem(`${LINKED_IGN_PREFIX}${email.toLowerCase()}`);
+      } catch {
+        // Ignore storage error
+      }
+    }
+    if (fallbackUser) {
+      const updated = { ...fallbackUser, linkedIgn: null };
+      setFallbackUser(updated);
+      try {
+        localStorage.setItem(SQUAD_ACCOUNT_STORAGE_KEY, JSON.stringify(updated));
+      } catch {}
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -208,8 +280,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         displayName: firebaseUser.displayName,
         photoURL: firebaseUser.photoURL,
         authMethod: 'google',
+        linkedIgn,
       }
-    : fallbackUser;
+    : fallbackUser
+      ? {
+          ...fallbackUser,
+          linkedIgn,
+        }
+      : null;
 
   return (
     <AuthContext.Provider
@@ -220,6 +298,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         signingIn,
         authError,
         authErrorCode,
+        linkedIgn,
+        linkMyIgn,
+        unlinkMyIgn,
         clearAuthError,
         signInWithGoogle,
         signInWithSquadAccount,

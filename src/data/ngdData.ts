@@ -204,6 +204,8 @@ export interface MatchHistoryRecord {
   teamBlue: MatchParticipant[];
   teamRed: MatchParticipant[];
   durationText: string;
+  blueAvgWr?: number;
+  redAvgWr?: number;
 }
 
 export const INITIAL_PLAYERS: PlayerProfile[] = [

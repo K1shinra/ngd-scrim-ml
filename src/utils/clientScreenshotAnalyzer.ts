@@ -188,6 +188,89 @@ export async function analyzeMlbbScreenshotClientFallback(params: {
     ...additionalImageDataUrls.filter((u) => u && u !== imageDataUrl),
   ];
 
+  // If VITE_GEMINI_API_KEY is configured on the client/Vercel build, attempt direct client-side Gemini call
+  const clientViteKey =
+    typeof import.meta !== 'undefined' && (import.meta as any).env
+      ? (import.meta as any).env.VITE_GEMINI_API_KEY
+      : undefined;
+
+  if (clientViteKey && typeof clientViteKey === 'string' && clientViteKey.trim()) {
+    try {
+      const { GoogleGenAI } = await import('@google/genai');
+      const ai = new GoogleGenAI({ apiKey: clientViteKey.trim() });
+      const imageParts = allUrls.slice(0, 4).map((url) => ({
+        inlineData: {
+          mimeType: 'image/jpeg',
+          data: url.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, ''),
+        },
+      }));
+
+      const knownRosterHint =
+        knownIgns && knownIgns.length > 0
+          ? `\nKnown NGD player IGNs (match if accurate): ${knownIgns.join(', ')}`
+          : '';
+
+      const prompt = `Analyze this Mobile Legends: Bang Bang (MLBB) post-match battle result screenshot. Return ONLY JSON matching:
+{
+  "winner": "Blue" | "Red",
+  "blueKills": number,
+  "redKills": number,
+  "duration": "MM:SS",
+  "mvpIgn": string,
+  "mvpKda": string,
+  "svpIgn": string,
+  "svpKda": string,
+  "feederIgn": string,
+  "teamBlue": [{ "ign": string, "kda": string, "rating": string, "isMvp": boolean, "heroDamage": number, "heroDamagePct": number, "damageTaken": number, "damageTakenPct": number, "turretDamage": number, "turretDamagePct": number, "teamfightPct": number, "gold": number, "medal": string, "isFeeder": boolean }],
+  "teamRed": [{ "ign": string, "kda": string, "rating": string, "isMvp": boolean, "heroDamage": number, "heroDamagePct": number, "damageTaken": number, "damageTakenPct": number, "turretDamage": number, "turretDamagePct": number, "teamfightPct": number, "gold": number, "medal": string, "isFeeder": boolean }]
+}
+Team Blue is on the left (5 players, top to bottom). Team Red is on the right (5 players, top to bottom). Extract exact IGNs, KDAs, and ratings.${knownRosterHint}`;
+
+      const res = await ai.models.generateContent({
+        model: 'gemini-flash-latest',
+        contents: {
+          parts: [...imageParts, { text: prompt }],
+        },
+        config: {
+          responseMimeType: 'application/json',
+        },
+      });
+
+      if (res.text && res.text.trim()) {
+        const cleaned = res.text
+          .trim()
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/\s*```$/i, '')
+          .trim();
+        const parsed = JSON.parse(cleaned);
+        if (
+          parsed &&
+          (Array.isArray(parsed.teamBlue) || Array.isArray(parsed.teamRed))
+        ) {
+          return {
+            winner:
+              typeof parsed.winner === 'string' &&
+              parsed.winner.toLowerCase().includes('red')
+                ? 'Red'
+                : 'Blue',
+            blueKills: Number(parsed.blueKills) || 0,
+            redKills: Number(parsed.redKills) || 0,
+            duration: parsed.duration || '',
+            mvpIgn: parsed.mvpIgn || '',
+            mvpKda: parsed.mvpKda || '',
+            svpIgn: parsed.svpIgn || '',
+            svpKda: parsed.svpKda || '',
+            feederIgn: parsed.feederIgn,
+            teamBlue: Array.isArray(parsed.teamBlue) ? parsed.teamBlue : [],
+            teamRed: Array.isArray(parsed.teamRed) ? parsed.teamRed : [],
+          };
+        }
+      }
+    } catch {
+      // Continue to dynamic Canvas + OCR fallback
+    }
+  }
+
   const loadImage = (url: string) =>
     new Promise<HTMLImageElement>((resolve, reject) => {
       const el = new Image();
@@ -309,15 +392,8 @@ export async function analyzeMlbbScreenshotClientFallback(params: {
   const blueRatings: string[] = ['', '', '', '', ''];
   const redRatings: string[] = ['', '', '', '', ''];
   const usedIgns = new Set<string>();
-  const detectedBlueIgns: string[] = [...currentBlueIgns.slice(0, 5)];
-  const detectedRedIgns: string[] = [...currentRedIgns.slice(0, 5)];
-
-  while (detectedBlueIgns.length < 5) {
-    detectedBlueIgns.push(`Blue Player ${detectedBlueIgns.length + 1}`);
-  }
-  while (detectedRedIgns.length < 5) {
-    detectedRedIgns.push(`Red Player ${detectedRedIgns.length + 1}`);
-  }
+  const detectedBlueIgns: string[] = ['', '', '', '', ''];
+  const detectedRedIgns: string[] = ['', '', '', '', ''];
 
   let combinedOcrText = '';
 
@@ -401,7 +477,7 @@ export async function analyzeMlbbScreenshotClientFallback(params: {
               matchedKnown || extractRawIgnFromLine(lineText, isLeft);
 
             if (isLeft) {
-              if (rawExtractedIgn) {
+              if (rawExtractedIgn && !detectedBlueIgns[rowIndex]) {
                 detectedBlueIgns[rowIndex] = rawExtractedIgn;
                 usedIgns.add(rawExtractedIgn.toLowerCase());
               }
@@ -420,7 +496,7 @@ export async function analyzeMlbbScreenshotClientFallback(params: {
                   `${pctMatches[0]} DMG · ${pctMatches[pctMatches.length - 1]} TF`;
               }
             } else {
-              if (rawExtractedIgn) {
+              if (rawExtractedIgn && !detectedRedIgns[rowIndex]) {
                 detectedRedIgns[rowIndex] = rawExtractedIgn;
                 usedIgns.add(rawExtractedIgn.toLowerCase());
               }
@@ -447,46 +523,14 @@ export async function analyzeMlbbScreenshotClientFallback(params: {
     // Ignore OCR failure and rely on Canvas + extracted rows
   }
 
-  // Recognize BattleID 760879880916932596 or signature tokens from either the KDA/Equipment tab or Data tab
-  if (
-    /760879|xTriggered|syven|Setsuko|TAKESHI|Mi\s*amor|db\s*sion|DND\s*Akira|EXE\s*yang|102755|111572|52572|84942|59881|69007|15:03/i.test(
-      combinedOcrText
-    )
-  ) {
-    detectedWinner = 'Blue';
-    blueKills = 22;
-    redKills = 21;
-    duration = '15:03';
-    blueMvpRowIndex = 3;
-    redMvpRowIndex = 0;
-
-    const exactBlue: ExtractedPlayerStat[] = [
-      { ign: 'EXE yang', kda: '1/4/11', rating: '7.4', isMvp: false },
-      { ign: 'POSE db sion', kda: '3/7/3', rating: '4.0', isMvp: false },
-      { ign: 'syven kai', kda: '2/5/4', rating: '5.2', isMvp: false },
-      { ign: 'HATE Mi amor.', kda: '12/2/2', rating: '10.7', isMvp: true },
-      { ign: 'DND Akira.', kda: '4/3/6', rating: '7.2', isMvp: false },
-    ];
-    const exactRed: ExtractedPlayerStat[] = [
-      { ign: 'xTriggered', kda: '9/4/8', rating: '9.4', isMvp: true },
-      { ign: 'TAKESHI.', kda: '1/6/8', rating: '5.7', isMvp: false },
-      { ign: 'Setsuko.', kda: '2/5/11', rating: '7.1', isMvp: false },
-      { ign: 'Whis', kda: '5/4/2', rating: '6.4', isMvp: false },
-      { ign: 'S', kda: '4/4/7', rating: '6.6', isMvp: false },
-    ];
-
-    return {
-      winner: 'Blue',
-      blueKills: 22,
-      redKills: 21,
-      duration: '15:03',
-      mvpIgn: 'HATE Mi amor.',
-      mvpKda: '12/2/2 · 10.7',
-      svpIgn: 'xTriggered',
-      svpKda: '9/4/8 · 9.4',
-      teamBlue: exactBlue,
-      teamRed: exactRed,
-    };
+  // Fallback missing slot player names gracefully without overwriting real parsed data
+  for (let i = 0; i < 5; i++) {
+    if (!detectedBlueIgns[i]) {
+      detectedBlueIgns[i] = currentBlueIgns[i] || `Blue Player ${i + 1}`;
+    }
+    if (!detectedRedIgns[i]) {
+      detectedRedIgns[i] = currentRedIgns[i] || `Red Player ${i + 1}`;
+    }
   }
 
   const teamBlue: ExtractedPlayerStat[] = detectedBlueIgns
