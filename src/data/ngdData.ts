@@ -160,6 +160,16 @@ export interface MatchParticipant {
   winrateSnapshot: number;
   kda?: string;
   rating?: string;
+  heroDamage?: number;
+  heroDamagePct?: number;
+  damageTaken?: number;
+  damageTakenPct?: number;
+  turretDamage?: number;
+  turretDamagePct?: number;
+  teamfightPct?: number;
+  gold?: number;
+  medal?: string; // 'MVP' | 'SVP' | 'Gold' | 'Silver' | 'Bronze'
+  isFeeder?: boolean;
 }
 
 export interface LiveMatchState {
@@ -183,7 +193,14 @@ export interface MatchHistoryRecord {
   winner: 'Blue' | 'Red';
   mvpIgn: string;
   svpIgn?: string;
+  feederIgn?: string;
   killScore?: string;
+  blueKills?: number;
+  redKills?: number;
+  seriesGameNumber?: number;
+  seriesScore?: string;
+  screenshotUrl?: string;
+  dataScreenshotUrl?: string;
   teamBlue: MatchParticipant[];
   teamRed: MatchParticipant[];
   durationText: string;
@@ -706,11 +723,18 @@ export const INITIAL_LIVE_MATCH: LiveMatchState = {
 
 export const INITIAL_MATCH_HISTORY: MatchHistoryRecord[] = [
   {
-    id: 'NGD-WARMUP-00',
+    id: 'NGD-WARMUP-01',
     roomName: 'Scrim Warmup · Game 1',
     completedAt: 'Tonight · 20:00',
     winner: 'Blue',
     mvpIgn: 'joshy',
+    svpIgn: 'aviona',
+    feederIgn: 'mi amor',
+    killScore: 'Blue 24 - 18 Red',
+    blueKills: 24,
+    redKills: 18,
+    seriesGameNumber: 1,
+    seriesScore: '1 - 0 (BO3)',
     durationText: '17m 24s',
     teamBlue: [
       {
@@ -719,6 +743,17 @@ export const INITIAL_MATCH_HISTORY: MatchHistoryRecord[] = [
         roleLabel: 'Jungler/Roam',
         assignedLane: 'Jungle',
         winrateSnapshot: 76.2,
+        kda: '9/1/8',
+        rating: '11.8',
+        medal: 'MVP',
+        heroDamage: 112450,
+        heroDamagePct: 34,
+        damageTaken: 45200,
+        damageTakenPct: 18,
+        turretDamage: 6800,
+        turretDamagePct: 42,
+        teamfightPct: 71,
+        gold: 13200,
       },
       {
         ign: 'Takeshi',
@@ -726,6 +761,17 @@ export const INITIAL_MATCH_HISTORY: MatchHistoryRecord[] = [
         roleLabel: 'Exp/Gold',
         assignedLane: 'EXP Lane',
         winrateSnapshot: 65.5,
+        kda: '4/2/9',
+        rating: '9.4',
+        medal: 'Gold',
+        heroDamage: 68300,
+        heroDamagePct: 21,
+        damageTaken: 89600,
+        damageTakenPct: 35,
+        turretDamage: 4200,
+        turretDamagePct: 26,
+        teamfightPct: 62,
+        gold: 11800,
       },
       {
         ign: 'Akira',
@@ -733,6 +779,17 @@ export const INITIAL_MATCH_HISTORY: MatchHistoryRecord[] = [
         roleLabel: 'Mid/Gold',
         assignedLane: 'Mid Lane',
         winrateSnapshot: 67.8,
+        kda: '6/3/11',
+        rating: '10.2',
+        medal: 'Gold',
+        heroDamage: 94800,
+        heroDamagePct: 29,
+        damageTaken: 36400,
+        damageTakenPct: 14,
+        turretDamage: 2100,
+        turretDamagePct: 13,
+        teamfightPct: 74,
+        gold: 12100,
       },
       {
         ign: 'whis',
@@ -740,6 +797,17 @@ export const INITIAL_MATCH_HISTORY: MatchHistoryRecord[] = [
         roleLabel: 'Gold/Roam',
         assignedLane: 'Gold Lane',
         winrateSnapshot: 68.4,
+        kda: '4/4/6',
+        rating: '7.8',
+        medal: 'Silver',
+        heroDamage: 42100,
+        heroDamagePct: 13,
+        damageTaken: 31200,
+        damageTakenPct: 12,
+        turretDamage: 2800,
+        turretDamagePct: 17,
+        teamfightPct: 45,
+        gold: 10900,
       },
       {
         ign: 'king aha',
@@ -747,15 +815,55 @@ export const INITIAL_MATCH_HISTORY: MatchHistoryRecord[] = [
         roleLabel: 'Roam',
         assignedLane: 'Roamer',
         winrateSnapshot: 66.0,
+        kda: '1/8/16',
+        rating: '8.1',
+        medal: 'Silver',
+        heroDamage: 11200,
+        heroDamagePct: 3,
+        damageTaken: 54100,
+        damageTakenPct: 21,
+        turretDamage: 300,
+        turretDamagePct: 2,
+        teamfightPct: 78,
+        gold: 8400,
       },
     ],
     teamRed: [
+      {
+        ign: 'aviona',
+        selectedRole: 'Mid Lane',
+        roleLabel: 'Mid/Gold',
+        assignedLane: 'Mid Lane',
+        winrateSnapshot: 68.5,
+        kda: '7/3/6',
+        rating: '10.6',
+        medal: 'SVP',
+        heroDamage: 104200,
+        heroDamagePct: 38,
+        damageTaken: 38900,
+        damageTakenPct: 15,
+        turretDamage: 1400,
+        turretDamagePct: 15,
+        teamfightPct: 76,
+        gold: 12400,
+      },
       {
         ign: 'Estranghero',
         selectedRole: 'Jungle',
         roleLabel: 'Jungler/Roam',
         assignedLane: 'Jungle',
         winrateSnapshot: 72.5,
+        kda: '5/4/5',
+        rating: '8.4',
+        medal: 'Gold',
+        heroDamage: 72100,
+        heroDamagePct: 26,
+        damageTaken: 49200,
+        damageTakenPct: 19,
+        turretDamage: 3800,
+        turretDamagePct: 40,
+        teamfightPct: 56,
+        gold: 11600,
       },
       {
         ign: 'Sion',
@@ -763,20 +871,35 @@ export const INITIAL_MATCH_HISTORY: MatchHistoryRecord[] = [
         roleLabel: 'Exp',
         assignedLane: 'EXP Lane',
         winrateSnapshot: 66.7,
+        kda: '3/4/4',
+        rating: '6.9',
+        medal: 'Silver',
+        heroDamage: 45600,
+        heroDamagePct: 17,
+        damageTaken: 92300,
+        damageTakenPct: 36,
+        turretDamage: 3100,
+        turretDamagePct: 33,
+        teamfightPct: 44,
+        gold: 10200,
       },
       {
         ign: 'Favian',
         selectedRole: 'Mid Lane',
         roleLabel: 'Mid',
-        assignedLane: 'Mid Lane',
-        winrateSnapshot: 72.4,
-      },
-      {
-        ign: 'aviona',
-        selectedRole: 'Mid Lane',
-        roleLabel: 'Mid/Gold',
         assignedLane: 'Gold Lane',
-        winrateSnapshot: 68.5,
+        winrateSnapshot: 72.4,
+        kda: '2/5/5',
+        rating: '5.8',
+        medal: 'Silver',
+        heroDamage: 38400,
+        heroDamagePct: 14,
+        damageTaken: 32100,
+        damageTakenPct: 12,
+        turretDamage: 900,
+        turretDamagePct: 10,
+        teamfightPct: 41,
+        gold: 9800,
       },
       {
         ign: 'mi amor',
@@ -784,6 +907,18 @@ export const INITIAL_MATCH_HISTORY: MatchHistoryRecord[] = [
         roleLabel: 'Multi',
         assignedLane: 'Roamer',
         winrateSnapshot: 72.9,
+        kda: '1/8/8',
+        rating: '4.6',
+        medal: 'Bronze',
+        isFeeder: true,
+        heroDamage: 14200,
+        heroDamagePct: 5,
+        damageTaken: 46200,
+        damageTakenPct: 18,
+        turretDamage: 200,
+        turretDamagePct: 2,
+        teamfightPct: 52,
+        gold: 7900,
       },
     ],
   },

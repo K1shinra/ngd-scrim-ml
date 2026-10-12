@@ -30,7 +30,9 @@ import {
   Unlock,
   UserPlus,
   Users,
+  BarChart3,
 } from 'lucide-react';
+import { GameStatsTab } from './components/GameStatsTab';
 import { useAuth } from './context/AuthContext';
 import { activeFirebaseProjectId } from './lib/firebase';
 import {
@@ -72,8 +74,9 @@ import {
   parseTraditionalGcText,
 } from './utils/scrimEngine';
 import { analyzeMlbbScreenshotClientFallback } from './utils/clientScreenshotAnalyzer';
+import type { ExtractedPlayerStat } from './server/screenshotAnalyzer';
 
-type ActiveTab = 'queue' | 'match' | 'leaderboard' | 'settings';
+type ActiveTab = 'queue' | 'match' | 'stats' | 'leaderboard' | 'settings';
 type LeaderboardSort = 'wins' | 'mvp' | 'winrate' | 'matches';
 type ThemeMode = 'light' | 'dark' | 'system';
 type Language = 'en' | 'tl';
@@ -109,6 +112,8 @@ const TRANSLATIONS = {
     navSlotsShort: '1–20 Slots',
     navMatch: '5v5 Team Shuffle',
     navMatchShort: '5v5 Match',
+    navStats: '📊 Game Stats & Posters',
+    navStatsShort: 'Stats & Posters',
     navLeaderboard: 'Leaderboard',
     navLeaderboardShort: 'Rankings',
     navSettings: 'Settings',
@@ -267,6 +272,8 @@ const TRANSLATIONS = {
     navSlotsShort: '1–20 Listahan',
     navMatch: '5v5 Kampihan',
     navMatchShort: '5v5 Laro',
+    navStats: '📊 Game Stats at Posters',
+    navStatsShort: 'Stats & Posters',
     navLeaderboard: 'Ranggo at Stats',
     navLeaderboardShort: 'Ranggo',
     navSettings: 'Settings',
@@ -1334,14 +1341,7 @@ export default function App() {
       }
 
       const buildScannedRoster = (
-        extractedList:
-          | {
-              ign: string;
-              kda: string;
-              rating: string;
-              isMvp: boolean;
-            }[]
-          | undefined,
+        extractedList: ExtractedPlayerStat[] | undefined,
         currentTeam: MatchParticipant[]
       ): MatchParticipant[] => {
         if (!Array.isArray(extractedList) || extractedList.length === 0) {
@@ -1398,6 +1398,16 @@ export default function App() {
             winrateSnapshot: getPlayerWinrate(cleanIgn, players),
             kda: item?.kda ? String(item.kda) : existingInTeam?.kda,
             rating: item?.rating ? String(item.rating) : existingInTeam?.rating,
+            heroDamage: typeof item?.heroDamage === 'number' ? item.heroDamage : existingInTeam?.heroDamage,
+            heroDamagePct: typeof item?.heroDamagePct === 'number' ? item.heroDamagePct : existingInTeam?.heroDamagePct,
+            damageTaken: typeof item?.damageTaken === 'number' ? item.damageTaken : existingInTeam?.damageTaken,
+            damageTakenPct: typeof item?.damageTakenPct === 'number' ? item.damageTakenPct : existingInTeam?.damageTakenPct,
+            turretDamage: typeof item?.turretDamage === 'number' ? item.turretDamage : existingInTeam?.turretDamage,
+            turretDamagePct: typeof item?.turretDamagePct === 'number' ? item.turretDamagePct : existingInTeam?.turretDamagePct,
+            teamfightPct: typeof item?.teamfightPct === 'number' ? item.teamfightPct : existingInTeam?.teamfightPct,
+            gold: typeof item?.gold === 'number' ? item.gold : existingInTeam?.gold,
+            medal: item?.medal ? String(item.medal) : existingInTeam?.medal,
+            isFeeder: Boolean(item?.isFeeder ?? existingInTeam?.isFeeder),
           };
         });
       };
@@ -1563,6 +1573,13 @@ export default function App() {
       nextMatchId = `NGD-M${String(nextNum).padStart(2, '0')}`;
     }
 
+    const detectedFeeder =
+      (winner === 'Blue'
+        ? liveMatch.teamRed.find((p) => p.isFeeder || p.medal?.toLowerCase() === 'bronze')?.ign
+        : liveMatch.teamBlue.find((p) => p.isFeeder || p.medal?.toLowerCase() === 'bronze')?.ign) ||
+      liveMatch.teamRed.find((p) => p.isFeeder)?.ign ||
+      liveMatch.teamBlue.find((p) => p.isFeeder)?.ign;
+
     const newRecord: MatchHistoryRecord = {
       id: nextMatchId,
       roomName: liveMatch.roomName,
@@ -1570,7 +1587,13 @@ export default function App() {
       winner,
       mvpIgn: winningMvpIgn,
       svpIgn: losingSvpIgn || undefined,
+      feederIgn: detectedFeeder || undefined,
       killScore: formattedKillScore || undefined,
+      blueKills: bKills ? parseInt(bKills, 10) : undefined,
+      redKills: rKills ? parseInt(rKills, 10) : undefined,
+      seriesGameNumber: (liveMatch.blueSeriesWins || 0) + (liveMatch.redSeriesWins || 0) + 1,
+      seriesScore: `${liveMatch.blueSeriesWins || 0} - ${liveMatch.redSeriesWins || 0}`,
+      screenshotUrl: scannedPreviewUrl || undefined,
       teamBlue: liveMatch.teamBlue,
       teamRed: liveMatch.teamRed,
       durationText: dur || 'Finished',
@@ -1944,6 +1967,17 @@ export default function App() {
             }`}
           >
             {t.navMatch}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('stats')}
+            className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 cursor-pointer ${
+              activeTab === 'stats'
+                ? 'border-cyan-600 dark:border-[#00f2fe] text-cyan-700 dark:text-[#00f2fe] font-semibold'
+                : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            {t.navStats}
           </button>
           <button
             type="button"
@@ -2952,6 +2986,13 @@ export default function App() {
         )}
 
         {/* =====================================================================
+            TAB: GAME STATS & LOGS (ADVANCE OCR STATS & POSTER GENERATOR)
+           ===================================================================== */}
+        {activeTab === 'stats' && (
+          <GameStatsTab matchHistory={matchHistory} />
+        )}
+
+        {/* =====================================================================
             TAB 3: LEADERBOARD STANDINGS
            ===================================================================== */}
         {activeTab === 'leaderboard' && (
@@ -3652,61 +3693,75 @@ export default function App() {
       {/* Mobile Bottom Navigation */}
       <nav
         aria-label="Mobile Navigation"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-16 bg-white/95 dark:bg-[#0b0f19]/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-4 items-center px-1.5"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-16 bg-white/95 dark:bg-[#0b0f19]/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-5 items-center px-1"
       >
         <button
           type="button"
           onClick={() => setActiveTab('queue')}
-          className={`min-h-[46px] min-w-0 px-1 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
+          className={`min-h-[46px] min-w-0 px-0.5 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
             activeTab === 'queue'
               ? 'text-cyan-700 dark:text-[#00f2fe]'
               : 'text-slate-500 dark:text-slate-400'
           }`}
         >
-          <Users className="w-5 h-5 shrink-0" />
-          <span className="w-full text-[10px] font-semibold mt-0.5 truncate text-center">
+          <Users className="w-4 h-4 shrink-0" />
+          <span className="w-full text-[9px] font-semibold mt-0.5 truncate text-center">
             {t.navSlotsShort}
           </span>
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('match')}
-          className={`min-h-[46px] min-w-0 px-1 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
+          className={`min-h-[46px] min-w-0 px-0.5 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
             activeTab === 'match'
               ? 'text-cyan-700 dark:text-[#00f2fe]'
               : 'text-slate-500 dark:text-slate-400'
           }`}
         >
-          <Swords className="w-5 h-5 shrink-0" />
-          <span className="w-full text-[10px] font-semibold mt-0.5 truncate text-center">
+          <Swords className="w-4 h-4 shrink-0" />
+          <span className="w-full text-[9px] font-semibold mt-0.5 truncate text-center">
             {t.navMatchShort}
           </span>
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab('stats')}
+          className={`min-h-[46px] min-w-0 px-0.5 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
+            activeTab === 'stats'
+              ? 'text-cyan-700 dark:text-[#00f2fe]'
+              : 'text-slate-500 dark:text-slate-400'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4 shrink-0" />
+          <span className="w-full text-[9px] font-semibold mt-0.5 truncate text-center">
+            {t.navStatsShort}
+          </span>
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab('leaderboard')}
-          className={`min-h-[46px] min-w-0 px-1 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
+          className={`min-h-[46px] min-w-0 px-0.5 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
             activeTab === 'leaderboard'
               ? 'text-cyan-700 dark:text-[#00f2fe]'
               : 'text-slate-500 dark:text-slate-400'
           }`}
         >
-          <Trophy className="w-5 h-5 shrink-0" />
-          <span className="w-full text-[10px] font-semibold mt-0.5 truncate text-center">
+          <Trophy className="w-4 h-4 shrink-0" />
+          <span className="w-full text-[9px] font-semibold mt-0.5 truncate text-center">
             {t.navLeaderboardShort}
           </span>
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('settings')}
-          className={`min-h-[46px] min-w-0 px-1 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
+          className={`min-h-[46px] min-w-0 px-0.5 flex flex-col items-center justify-center rounded-lg cursor-pointer ${
             activeTab === 'settings'
               ? 'text-cyan-700 dark:text-[#00f2fe]'
               : 'text-slate-500 dark:text-slate-400'
           }`}
         >
-          <Settings className="w-5 h-5 shrink-0" />
-          <span className="w-full text-[10px] font-semibold mt-0.5 truncate text-center">
+          <Settings className="w-4 h-4 shrink-0" />
+          <span className="w-full text-[9px] font-semibold mt-0.5 truncate text-center">
             {t.navSettingsShort}
           </span>
         </button>

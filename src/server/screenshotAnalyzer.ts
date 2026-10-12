@@ -5,6 +5,16 @@ export interface ExtractedPlayerStat {
   kda: string;
   rating: string;
   isMvp: boolean;
+  heroDamage?: number;
+  heroDamagePct?: number;
+  damageTaken?: number;
+  damageTakenPct?: number;
+  turretDamage?: number;
+  turretDamagePct?: number;
+  teamfightPct?: number;
+  gold?: number;
+  medal?: string; // 'MVP' | 'SVP' | 'Gold' | 'Silver' | 'Bronze'
+  isFeeder?: boolean;
 }
 
 export interface ExtractedBattleResult {
@@ -16,6 +26,7 @@ export interface ExtractedBattleResult {
   mvpKda: string;
   svpIgn: string;
   svpKda: string;
+  feederIgn?: string;
   teamBlue: ExtractedPlayerStat[];
   teamRed: ExtractedPlayerStat[];
 }
@@ -25,38 +36,43 @@ const RESPONSE_SCHEMA = {
   properties: {
     winner: {
       type: Type.STRING,
-      description: "Winning team: 'Blue' (left side) or 'Red' (right side).",
+      description: "Winning team: 'Blue' (left side) or 'Red' (right side). Look at VICTORY/DEFEAT banner or winning gold MVP badge.",
     },
     blueKills: {
       type: Type.INTEGER,
-      description: 'Total kills for Team Blue (left score).',
+      description: 'Total kills for Team Blue (left score, e.g. 22). If only Data tab is uploaded, extract or estimate 0.',
     },
     redKills: {
       type: Type.INTEGER,
-      description: 'Total kills for Team Red (right score).',
+      description: 'Total kills for Team Red (right score, e.g. 21). If only Data tab is uploaded, extract or estimate 0.',
     },
     duration: {
       type: Type.STRING,
-      description: 'Match duration in MM:SS format (e.g. 17:44).',
+      description: 'Match duration in MM:SS format (e.g. 17:44 or 15:03). Empty string if not visible.',
     },
     mvpIgn: {
       type: Type.STRING,
-      description: 'IGN of the winning team MVP.',
+      description: 'IGN of the winning team MVP (or highest performance player).',
     },
     mvpKda: {
       type: Type.STRING,
-      description: 'KDA and rating of the winning MVP (e.g. 3/2/14 · 10.5).',
+      description: 'KDA or stats of winning MVP (e.g. 3/2/14 · 10.5 or 37% DMG).',
     },
     svpIgn: {
       type: Type.STRING,
-      description: 'IGN of the losing team Defeat MVP (SVP).',
+      description: 'IGN of the losing team Defeat MVP / SVP.',
     },
     svpKda: {
       type: Type.STRING,
-      description: 'KDA and rating of the losing team SVP (e.g. 4/3/13 · 9.9).',
+      description: 'KDA or stats of losing SVP.',
+    },
+    feederIgn: {
+      type: Type.STRING,
+      description: 'IGN of the match feeder / lowest performer / bronze medal player with most deaths or lowest rating.',
     },
     teamBlue: {
       type: Type.ARRAY,
+      description: '5 players of Team Blue (left column, top to bottom)',
       items: {
         type: Type.OBJECT,
         properties: {
@@ -64,12 +80,23 @@ const RESPONSE_SCHEMA = {
           kda: { type: Type.STRING },
           rating: { type: Type.STRING },
           isMvp: { type: Type.BOOLEAN },
+          heroDamage: { type: Type.INTEGER, description: 'Hero Damage dealt (e.g. 98450)' },
+          heroDamagePct: { type: Type.INTEGER, description: 'Hero Damage percentage (e.g. 34 for 34%)' },
+          damageTaken: { type: Type.INTEGER, description: 'Damage Taken (e.g. 82100)' },
+          damageTakenPct: { type: Type.INTEGER, description: 'Damage Taken percentage (e.g. 31 for 31%)' },
+          turretDamage: { type: Type.INTEGER, description: 'Turret/Push Damage (e.g. 5400)' },
+          turretDamagePct: { type: Type.INTEGER, description: 'Turret Damage percentage (e.g. 42 for 42%)' },
+          teamfightPct: { type: Type.INTEGER, description: 'Teamfight participation rate (e.g. 72 for 72%)' },
+          gold: { type: Type.INTEGER, description: 'Total Gold / Net worth' },
+          medal: { type: Type.STRING, description: 'MVP, SVP, Gold, Silver, or Bronze' },
+          isFeeder: { type: Type.BOOLEAN, description: 'True for the player with lowest score or highest deaths' },
         },
-        required: ['ign', 'kda', 'rating', 'isMvp'],
+        required: ['ign'],
       },
     },
     teamRed: {
       type: Type.ARRAY,
+      description: '5 players of Team Red (right column, top to bottom)',
       items: {
         type: Type.OBJECT,
         properties: {
@@ -77,20 +104,23 @@ const RESPONSE_SCHEMA = {
           kda: { type: Type.STRING },
           rating: { type: Type.STRING },
           isMvp: { type: Type.BOOLEAN },
+          heroDamage: { type: Type.INTEGER, description: 'Hero Damage dealt (e.g. 98450)' },
+          heroDamagePct: { type: Type.INTEGER, description: 'Hero Damage percentage (e.g. 34 for 34%)' },
+          damageTaken: { type: Type.INTEGER, description: 'Damage Taken (e.g. 82100)' },
+          damageTakenPct: { type: Type.INTEGER, description: 'Damage Taken percentage (e.g. 31 for 31%)' },
+          turretDamage: { type: Type.INTEGER, description: 'Turret/Push Damage (e.g. 5400)' },
+          turretDamagePct: { type: Type.INTEGER, description: 'Turret Damage percentage (e.g. 42 for 42%)' },
+          teamfightPct: { type: Type.INTEGER, description: 'Teamfight participation rate (e.g. 72 for 72%)' },
+          gold: { type: Type.INTEGER, description: 'Total Gold / Net worth' },
+          medal: { type: Type.STRING, description: 'MVP, SVP, Gold, Silver, or Bronze' },
+          isFeeder: { type: Type.BOOLEAN, description: 'True for the player with lowest score or highest deaths' },
         },
-        required: ['ign', 'kda', 'rating', 'isMvp'],
+        required: ['ign'],
       },
     },
   },
   required: [
     'winner',
-    'blueKills',
-    'redKills',
-    'duration',
-    'mvpIgn',
-    'mvpKda',
-    'svpIgn',
-    'svpKda',
     'teamBlue',
     'teamRed',
   ],
@@ -146,17 +176,35 @@ export async function analyzeMlbbScreenshot(params: {
       ? `\nKnown NGD Squad & Scrim player IGNs (ONLY use one of these if a player name in the screenshot actually matches it; otherwise keep the exact IGN shown in the screenshot, stripping gender symbols like ♂/♀): ${params.knownIgns.join(', ')}`
       : '';
 
-  const promptText = `Analyze the provided Mobile Legends: Bang Bang (MLBB) post-match Battle Result screenshot(s) (which may include the Equipment/KDA scoreboard tab, the Data/Damage tab, or both).
-Extract:
-1. The left column is Team Blue (5 players, top to bottom) and the right column is Team Red (5 players, top to bottom).
-2. Determine which team won ('Blue' or 'Red'). Note: In MLBB battle results, the top banner says VICTORY or DEFEAT for the left side, or look at which side has the bright gold winning MVP crown badge vs the Losing MVP badge. If the top banner says VICTORY, Team Blue (left side) won. If DEFEAT, Team Red (right side) won.
-3. Extract the total kills for Team Blue (left big score number next to VICTORY/DEFEAT, e.g. 22) and Team Red (right big score number, e.g. 21), and the match duration in MM:SS format (e.g. "15:03" next to Duration at the top right, even if partially covered by a tooltip).
-4. Extract all 5 players on Team Blue (left side) and all 5 players on Team Red (right side) in exact top-to-bottom row order:
-   - ign: Player's exact in-game name (remove gender icons like ♂ or ♀, e.g. "EXE yang", "POSE db sion", "syven kai", "HATE Mi amor.", "DND Akira.", "xTriggered", "TAKESHI.", "Setsuko.", "Whis", "S").
-   - kda: If KDA numbers (Kills Deaths Assists) are visible, format as "K/D/A" (e.g. "12/2/2", "1/4/11", "9/4/8"). If only the Data/Damage tab is provided without KDA numbers, format kda as Hero Damage % and Teamfight % (e.g. "37% DMG · 64% TF").
-   - rating: Medal rating number if visible (e.g. "10.7", "7.4", "9.4"), or empty string if on Data tab only.
-   - isMvp: true ONLY for the 1 best player (MVP) on Team Blue and the 1 best player (MVP/SVP) on Team Red.
-5. Identify mvpIgn (the winning team's MVP) and svpIgn (the losing team's best player / SVP).${knownRosterHint}`;
+  const promptText = `Analyze the provided Mobile Legends: Bang Bang (MLBB) post-match Battle Result screenshot(s).
+The screenshots can be:
+- The DATA screen (columns: Hero Avatar/IGN, Hero Damage + %, Damage Taken + %, Turret Damage/Push + %, Teamfight Rate %, Gold/Net Worth).
+- The SCOREBOARD/EQUIPMENT screen (columns: Hero Avatar/IGN, KDA e.g. 12/2/8, Medal Rating e.g. 10.5, Gold, Items).
+- Or both uploaded together.
+
+Instructions:
+1. Team Blue is on the left side (5 players, ordered top-to-bottom).
+2. Team Red is on the right side (5 players, ordered top-to-bottom).
+3. Winner: Look at the top banner (VICTORY on left = Blue won; VICTORY on right / DEFEAT on left = Red won) or the gold winning MVP crown badge vs losing Defeat MVP (SVP) badge. Winner must be 'Blue' or 'Red'.
+4. Score & Duration:
+   - Blue kills & Red kills (big team score numbers at the top). If only the Data screen is uploaded without kills, estimate or default to 0.
+   - Duration (MM:SS, e.g. "17:44" or "15:03" usually at the top right).
+5. For each player on Team Blue and Team Red (in exact top-to-bottom order):
+   - ign: Player's exact in-game name (strip gender icons ♂/♀ and decorative bracket artifacts).
+   - kda: "K/D/A" string (e.g. "12/2/2", "1/7/4"). If on Data screen without KDA, format as "34% DMG · 65% TF".
+   - rating: Medal rating number (e.g. "10.8", "7.4", "3.2").
+   - medal: "MVP", "SVP", "Gold", "Silver", or "Bronze" based on the medal emblem.
+   - heroDamage: Raw hero damage dealt number if visible (e.g. 104231).
+   - heroDamagePct: Percentage of team damage (e.g. 37 for 37%).
+   - damageTaken: Raw damage taken number if visible (e.g. 89450).
+   - damageTakenPct: Percentage of team damage taken (e.g. 31 for 31%).
+   - turretDamage: Raw turret push damage number if visible (e.g. 5600).
+   - turretDamagePct: Percentage of turret damage (e.g. 45 for 45%).
+   - teamfightPct: Teamfight participation rate (e.g. 74 for 74%).
+   - gold: Total gold if visible.
+   - isMvp: true ONLY for the 1 best player on Team Blue and the 1 best player on Team Red.
+   - isFeeder: true for the player with lowest score, bronze medal, or most deaths.
+6. Identify mvpIgn (winning team's MVP), svpIgn (losing team's Defeat MVP), and feederIgn (player with bronze medal / lowest score / feeder in the match).${knownRosterHint}`;
 
   const contents = {
     parts: [
@@ -219,6 +267,16 @@ Extract:
     if (!Array.isArray(list)) return [];
     return list.map((item, idx) => {
       const obj = (item || {}) as Record<string, unknown>;
+      const parseNum = (val: unknown): number | undefined => {
+        if (typeof val === 'number' && !Number.isNaN(val)) return Math.round(val);
+        if (typeof val === 'string') {
+          const clean = val.replace(/[^0-9.-]/g, '');
+          const n = Number(clean);
+          if (!Number.isNaN(n)) return Math.round(n);
+        }
+        return undefined;
+      };
+
       return {
         ign:
           typeof obj.ign === 'string' && obj.ign.trim()
@@ -227,6 +285,16 @@ Extract:
         kda: typeof obj.kda === 'string' ? obj.kda.trim() : '',
         rating: typeof obj.rating === 'string' ? obj.rating.trim() : '',
         isMvp: Boolean(obj.isMvp),
+        heroDamage: parseNum(obj.heroDamage),
+        heroDamagePct: parseNum(obj.heroDamagePct),
+        damageTaken: parseNum(obj.damageTaken),
+        damageTakenPct: parseNum(obj.damageTakenPct),
+        turretDamage: parseNum(obj.turretDamage),
+        turretDamagePct: parseNum(obj.turretDamagePct),
+        teamfightPct: parseNum(obj.teamfightPct),
+        gold: parseNum(obj.gold),
+        medal: typeof obj.medal === 'string' ? obj.medal.trim() : undefined,
+        isFeeder: Boolean(obj.isFeeder),
       };
     });
   };
@@ -250,6 +318,7 @@ Extract:
     mvpKda: typeof parsed.mvpKda === 'string' ? parsed.mvpKda.trim() : '',
     svpIgn: typeof parsed.svpIgn === 'string' ? parsed.svpIgn.trim() : '',
     svpKda: typeof parsed.svpKda === 'string' ? parsed.svpKda.trim() : '',
+    feederIgn: typeof parsed.feederIgn === 'string' ? parsed.feederIgn.trim() : undefined,
     teamBlue: sanitizeTeam(parsed.teamBlue),
     teamRed: sanitizeTeam(parsed.teamRed),
   };
