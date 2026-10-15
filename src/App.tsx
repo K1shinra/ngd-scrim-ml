@@ -74,14 +74,15 @@ import {
   autoBalance5v5,
   autoBalanceCurrentParticipants,
   buildDirectLineup5v5,
+  cleanPlayerIgn,
+  detectSeriesFormatFromText,
   formatBattleResultGcText,
   formatGcText,
   getPlayerWinrate,
   parseTraditionalGcText,
 } from './utils/scrimEngine';
-import { analyzeMlbbScreenshotClientFallback } from './utils/clientScreenshotAnalyzer';
-import type { ExtractedPlayerStat } from './server/screenshotAnalyzer';
 import { MatchPosterModal, PosterTemplate } from './components/MatchPosterModal';
+import { LeaderboardSummaryModal } from './components/LeaderboardSummaryModal';
 
 type ActiveTab = 'queue' | 'match' | 'stats' | 'leaderboard' | 'settings';
 type LeaderboardSort = 'wins' | 'mvp' | 'winrate' | 'matches';
@@ -806,14 +807,8 @@ export default function App() {
   const [blueKillsInput, setBlueKillsInput] = useState<string>('');
   const [redKillsInput, setRedKillsInput] = useState<string>('');
   const [matchDurationInput, setMatchDurationInput] = useState<string>('');
-  const [isScanningScreenshot, setIsScanningScreenshot] = useState(false);
-  const [scannedPreviewUrl, setScannedPreviewUrl] = useState<string | null>(
-    null
-  );
-  const [scannedDetectedWinner, setScannedDetectedWinner] = useState<
-    'Blue' | 'Red' | null
-  >(null);
-  const screenshotInputRef = useRef<HTMLInputElement | null>(null);
+  const [showLeaderboardSummaryModal, setShowLeaderboardSummaryModal] = useState(false);
+  const [showManualStatsEditor, setShowManualStatsEditor] = useState(false);
 
   useEffect(() => {
     const blueHasCurrent = liveMatch.teamBlue.some(
@@ -1036,13 +1031,35 @@ export default function App() {
     triggerToast(t.toastPromoted);
   };
 
-  const handleImportGcText = () => {
-    const parsed = parseTraditionalGcText(pasteRawText);
+  const handleAutoFillSlotsFromText = (rawText: string, notify = true) => {
+    if (!rawText || !rawText.trim()) return false;
+    const parsed = parseTraditionalGcText(rawText, players);
     if (parsed.length === 0) {
-      triggerToast(
-        'Format example: "1. Estranghero - Jungler/Roam"'
-      );
-      return;
+      if (notify) {
+        triggerToast(
+          language === 'tl'
+            ? 'Format: "1. xTriggered" o "NGD SCRIM 5v5 LIST: 1. xTriggered..."'
+            : 'Format: "1. xTriggered" or "LIST: 1. xTriggered..."'
+        );
+      }
+      return false;
+    }
+
+    // Auto-detect series format if present e.g. "BO3 DRAFT", "BO5", "BO1"
+    const detectedSeries = detectSeriesFormatFromText(rawText);
+    if (detectedSeries) {
+      setLiveMatch((prev) => ({
+        ...prev,
+        seriesFormat: detectedSeries,
+      }));
+    }
+
+    // Auto-detect room name e.g. NGD SCRIM 5v5
+    if (rawText.toUpperCase().includes('NGD SCRIM 5V5')) {
+      setLiveMatch((prev) => ({
+        ...prev,
+        roomName: 'NGD SCRIM 5v5',
+      }));
     }
 
     const timeLabel = getCurrentTimeLabel();
@@ -1065,8 +1082,45 @@ export default function App() {
       return next;
     });
 
+    for (const entry of parsed) {
+      ensurePlayerInRoster(entry.ign, entry.role, entry.secondaryRole);
+    }
+
     setShowPasteBox(false);
-    triggerToast(`Imported ${parsed.length} players!`);
+    if (notify) {
+      triggerToast(
+        language === 'tl'
+          ? `⚡ Na-auto fill agad ang ${parsed.length} players sa mga slots! (Slots 1–${parsed.length})`
+          : `⚡ Auto-filled ${parsed.length} players into slots! (Slots 1–${parsed.length})`
+      );
+    }
+    return true;
+  };
+
+  const handleImportGcText = () => {
+    handleAutoFillSlotsFromText(pasteRawText, true);
+  };
+
+  const handleClipboardQuickPaste = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && text.trim()) {
+        setPasteRawText(text);
+        const ok = handleAutoFillSlotsFromText(text, true);
+        if (!ok) {
+          setShowPasteBox(true);
+        }
+      } else {
+        setShowPasteBox(true);
+      }
+    } catch {
+      setShowPasteBox(true);
+      triggerToast(
+        language === 'tl'
+          ? 'Paki-paste ang listahan sa text box gamit ang Ctrl+V'
+          : 'Please paste the list into the text box using Ctrl+V'
+      );
+    }
   };
 
   // --- SHUFFLE, DIRECT LINEUP (NO SHUFFLE) & SERIES FORMAT ---
@@ -1352,321 +1406,6 @@ export default function App() {
     );
   };
 
-  const compressImageFileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const img = new Image();
-        img.onload = () => {
-          const maxDim = 1280;
-          let width = img.width || 1280;
-          let height = img.height || 720;
-          if (width > maxDim || height > maxDim) {
-            if (width > height) {
-              height = Math.round((height * maxDim) / width);
-              width = maxDim;
-            } else {
-              width = Math.round((width * maxDim) / height);
-              height = maxDim;
-            }
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(String(reader.result));
-            return;
-          }
-          ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.8));
-        };
-        img.onerror = () => reject(new Error('Invalid image file'));
-        img.src = String(reader.result);
-      };
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsDataURL(file);
-    });
-  };
-
-  const handleUploadBattleScreenshot = async (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const fileList = e.target.files ? Array.from(e.target.files) : [];
-    if (fileList.length === 0) return;
-    e.target.value = '';
-
-    setIsScanningScreenshot(true);
-    try {
-      const compressedDataUrls: string[] = [];
-      for (const file of fileList.slice(0, 4)) {
-        try {
-          const url = await compressImageFileToBase64(file);
-          compressedDataUrls.push(url);
-        } catch {
-          // Skip unreadable file
-        }
-      }
-
-      if (compressedDataUrls.length === 0) {
-        setScannedDetectedWinner('Blue');
-        triggerToast(t.toastScanSuccess);
-        return;
-      }
-
-      const primaryDataUrl = compressedDataUrls[0];
-      setScannedPreviewUrl(primaryDataUrl);
-
-      const knownIgns = Array.from(
-        new Set([
-          ...players.map((p) => p.ign),
-          ...slots.filter((s): s is ScrimSlot => s !== null).map((s) => s.ign),
-          ...liveMatch.teamBlue.map((p) => p.ign),
-          ...liveMatch.teamRed.map((p) => p.ign),
-        ])
-      );
-
-      let data: {
-        winner?: 'Blue' | 'Red' | string;
-        blueKills?: number;
-        redKills?: number;
-        duration?: string;
-        mvpIgn?: string;
-        mvpKda?: string;
-        svpIgn?: string;
-        svpKda?: string;
-        teamBlue?: {
-          ign: string;
-          kda: string;
-          rating: string;
-          isMvp: boolean;
-        }[];
-        teamRed?: {
-          ign: string;
-          kda: string;
-          rating: string;
-          isMvp: boolean;
-        }[];
-      } | null = null;
-
-      let usedMethod: 'gemini' | 'ocr' = 'ocr';
-      let serverErrorNotice: string | null = null;
-
-      try {
-        const payloadImages = compressedDataUrls.map((url) => ({
-          imageBase64: url,
-          mimeType: 'image/jpeg',
-        }));
-
-        const res = await fetch('/api/scrim/analyze-screenshot', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            imageBase64: primaryDataUrl,
-            mimeType: 'image/jpeg',
-            images: payloadImages,
-            knownIgns,
-          }),
-        });
-
-        if (res.ok) {
-          const serverData = await res.json();
-          if (
-            serverData &&
-            ((Array.isArray(serverData.teamBlue) &&
-              serverData.teamBlue.length > 0) ||
-              (Array.isArray(serverData.teamRed) &&
-                serverData.teamRed.length > 0) ||
-              typeof serverData.blueKills === 'number')
-          ) {
-            data = serverData;
-            usedMethod = 'gemini';
-          }
-        } else {
-          try {
-            const errJson = await res.json();
-            if (errJson?.error) {
-              serverErrorNotice = errJson.error;
-            }
-          } catch {
-            serverErrorNotice = `HTTP ${res.status}`;
-          }
-        }
-      } catch (err: unknown) {
-        serverErrorNotice = err instanceof Error ? err.message : 'Network error';
-      }
-
-      if (
-        !data ||
-        ((!Array.isArray(data.teamBlue) || data.teamBlue.length === 0) &&
-          (!Array.isArray(data.teamRed) || data.teamRed.length === 0))
-      ) {
-        data = await analyzeMlbbScreenshotClientFallback({
-          imageDataUrl: primaryDataUrl,
-          additionalImageDataUrls: compressedDataUrls.slice(1),
-          knownIgns,
-          currentBlueIgns: liveMatch.teamBlue.map((p) => p.ign),
-          currentRedIgns: liveMatch.teamRed.map((p) => p.ign),
-        });
-      }
-
-      const buildScannedRoster = (
-        extractedList: ExtractedPlayerStat[] | undefined,
-        currentTeam: MatchParticipant[]
-      ): MatchParticipant[] => {
-        if (!Array.isArray(extractedList) || extractedList.length === 0) {
-          return currentTeam;
-        }
-        return extractedList.slice(0, 5).map((item, idx) => {
-          const rawIgn = typeof item?.ign === 'string' ? item.ign.trim() : '';
-          const cleanIgn =
-            rawIgn || currentTeam[idx]?.ign || `Player ${idx + 1}`;
-          const existingInTeam = currentTeam.find(
-            (p) => p.ign.toLowerCase() === cleanIgn.toLowerCase()
-          );
-          const existingInSlot = slots.find(
-            (s) => s && s.ign.toLowerCase() === cleanIgn.toLowerCase()
-          );
-          const existingInProfile = players.find(
-            (p) => p.ign.toLowerCase() === cleanIgn.toLowerCase()
-          );
-
-          const assignedLane: MlbbRole =
-            existingInTeam?.assignedLane ||
-            (existingInSlot?.role && existingInSlot.role !== 'Flex Role'
-              ? existingInSlot.role
-              : undefined) ||
-            (existingInProfile?.primaryRole &&
-            existingInProfile.primaryRole !== 'Flex Role'
-              ? existingInProfile.primaryRole
-              : undefined) ||
-            CORE_FIVE_ROLES[idx % CORE_FIVE_ROLES.length];
-
-          const selectedRole: MlbbRole =
-            existingInTeam?.selectedRole ||
-            existingInSlot?.role ||
-            existingInProfile?.primaryRole ||
-            assignedLane;
-
-          const secondaryRole: MlbbRole | undefined =
-            existingInTeam?.secondaryRole ||
-            existingInSlot?.secondaryRole ||
-            existingInProfile?.secondaryRole;
-
-          const roleLabel =
-            existingInTeam?.roleLabel ||
-            existingInSlot?.roleLabel ||
-            existingInProfile?.roleLabel ||
-            ROLE_META[assignedLane].gcLabel;
-
-          return {
-            ign: existingInProfile?.ign || existingInSlot?.ign || cleanIgn,
-            selectedRole,
-            secondaryRole,
-            roleLabel,
-            assignedLane,
-            winrateSnapshot: getPlayerWinrate(cleanIgn, players),
-            kda: item?.kda ? String(item.kda) : existingInTeam?.kda,
-            rating: item?.rating ? String(item.rating) : existingInTeam?.rating,
-            heroDamage: typeof item?.heroDamage === 'number' ? item.heroDamage : existingInTeam?.heroDamage,
-            heroDamagePct: typeof item?.heroDamagePct === 'number' ? item.heroDamagePct : existingInTeam?.heroDamagePct,
-            damageTaken: typeof item?.damageTaken === 'number' ? item.damageTaken : existingInTeam?.damageTaken,
-            damageTakenPct: typeof item?.damageTakenPct === 'number' ? item.damageTakenPct : existingInTeam?.damageTakenPct,
-            turretDamage: typeof item?.turretDamage === 'number' ? item.turretDamage : existingInTeam?.turretDamage,
-            turretDamagePct: typeof item?.turretDamagePct === 'number' ? item.turretDamagePct : existingInTeam?.turretDamagePct,
-            teamfightPct: typeof item?.teamfightPct === 'number' ? item.teamfightPct : existingInTeam?.teamfightPct,
-            gold: typeof item?.gold === 'number' ? item.gold : existingInTeam?.gold,
-            medal: item?.medal ? String(item.medal) : existingInTeam?.medal,
-            isFeeder: Boolean(item?.isFeeder ?? existingInTeam?.isFeeder),
-          };
-        });
-      };
-
-      const nextBlue = buildScannedRoster(data.teamBlue, liveMatch.teamBlue);
-      const nextRed = buildScannedRoster(data.teamRed, liveMatch.teamRed);
-
-      const detectedWinner: 'Blue' | 'Red' =
-        typeof data.winner === 'string' &&
-        data.winner.toLowerCase().includes('red')
-          ? 'Red'
-          : 'Blue';
-
-      const detectedBlueStar =
-        nextBlue.find((p) =>
-          data?.teamBlue?.some(
-            (x: { ign: string; isMvp: boolean }) =>
-              x?.isMvp &&
-              typeof x.ign === 'string' &&
-              x.ign.toLowerCase() === p.ign.toLowerCase()
-          )
-        )?.ign ||
-        (detectedWinner === 'Blue' && data.mvpIgn ? data.mvpIgn : '') ||
-        (detectedWinner === 'Red' && data.svpIgn ? data.svpIgn : '') ||
-        nextBlue[0]?.ign ||
-        '';
-
-      const detectedRedStar =
-        nextRed.find((p) =>
-          data?.teamRed?.some(
-            (x: { ign: string; isMvp: boolean }) =>
-              x?.isMvp &&
-              typeof x.ign === 'string' &&
-              x.ign.toLowerCase() === p.ign.toLowerCase()
-          )
-        )?.ign ||
-        (detectedWinner === 'Red' && data.mvpIgn ? data.mvpIgn : '') ||
-        (detectedWinner === 'Blue' && data.svpIgn ? data.svpIgn : '') ||
-        nextRed[0]?.ign ||
-        '';
-
-      setLiveMatch((prev) => ({
-        ...prev,
-        teamBlue: nextBlue,
-        teamRed: nextRed,
-        mvpIgn:
-          detectedWinner === 'Blue' ? detectedBlueStar : detectedRedStar,
-      }));
-
-      if (detectedBlueStar) setBlueStarIgn(detectedBlueStar);
-      if (detectedRedStar) setRedStarIgn(detectedRedStar);
-      if (typeof data.blueKills === 'number' && data.blueKills > 0) {
-        setBlueKillsInput(String(data.blueKills));
-      }
-      if (typeof data.redKills === 'number' && data.redKills > 0) {
-        setRedKillsInput(String(data.redKills));
-      }
-      if (data.duration) {
-        setMatchDurationInput(String(data.duration));
-      }
-      setScannedDetectedWinner(detectedWinner);
-      if (usedMethod === 'gemini') {
-        triggerToast(
-          language === 'tl'
-            ? '🤖 Tagumpay na na-scan ng Gemini Vision AI ang Battle Result!'
-            : '🤖 Battle Result successfully analyzed by Gemini Vision AI!'
-        );
-      } else if (serverErrorNotice) {
-        triggerToast(
-          language === 'tl'
-            ? `⚠️ Na-scan gamit ang On-Device OCR (${serverErrorNotice})`
-            : `⚠️ Scanned via On-Device OCR (${serverErrorNotice})`
-        );
-      } else {
-        triggerToast(t.toastScanSuccess);
-      }
-    } catch (err: unknown) {
-      console.error('Screenshot processing failed:', err);
-      const errMsg = err instanceof Error ? err.message : '';
-      setScannedDetectedWinner('Blue');
-      triggerToast(
-        language === 'tl'
-          ? `May problema sa pagbasa ng screenshot${errMsg ? `: ${errMsg}` : ''}`
-          : `Failed to read screenshot${errMsg ? `: ${errMsg}` : ''}`
-      );
-    } finally {
-      setIsScanningScreenshot(false);
-    }
-  };
 
   const handleFinishMatch = (winner: 'Blue' | 'Red') => {
     const winningRoster =
@@ -1783,7 +1522,7 @@ export default function App() {
       redKills: rKills ? parseInt(rKills, 10) : undefined,
       seriesGameNumber: (liveMatch.blueSeriesWins || 0) + (liveMatch.redSeriesWins || 0) + 1,
       seriesScore: `${liveMatch.blueSeriesWins || 0} - ${liveMatch.redSeriesWins || 0}`,
-      screenshotUrl: scannedPreviewUrl || undefined,
+      screenshotUrl: undefined,
       teamBlue: liveMatch.teamBlue,
       teamRed: liveMatch.teamRed,
       durationText: dur || 'Finished',
@@ -1824,8 +1563,6 @@ export default function App() {
     setBlueKillsInput('');
     setRedKillsInput('');
     setMatchDurationInput('');
-    setScannedPreviewUrl(null);
-    setScannedDetectedWinner(null);
 
     if (targetWins === 1) {
       triggerToast(
@@ -2290,7 +2027,15 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto shrink-0">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleClipboardQuickPaste}
+                    className="min-h-[38px] px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white dark:bg-[#00f2fe] dark:hover:bg-cyan-300 dark:text-slate-950 text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                  >
+                    <ClipboardPaste className="w-3.5 h-3.5 shrink-0" />
+                    <span>⚡ Quick Paste (Auto-Fill)</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setShowPasteBox((v) => !v)}
@@ -2314,28 +2059,62 @@ export default function App() {
               </div>
 
               {showPasteBox && (
-                <div className="p-3 sm:p-3.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 space-y-2.5">
+                <div className="p-3.5 sm:p-4 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-cyan-500/30 space-y-3 shadow-inner">
+                  <div className="flex items-center justify-between text-xs text-cyan-700 dark:text-[#00f2fe] font-bold">
+                    <span className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Auto-Detect Scrim 5v5 List (1-10)</span>
+                    </span>
+                    <span className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
+                      I-paste dito — automatic mapupunta sa mga slot agad!
+                    </span>
+                  </div>
+
                   <textarea
                     value={pasteRawText}
-                    onChange={(e) => setPasteRawText(e.target.value)}
-                    rows={5}
-                    className="w-full p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-xs text-slate-800 dark:text-slate-200 focus:outline-none"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPasteRawText(val);
+                      handleAutoFillSlotsFromText(val, false);
+                    }}
+                    onPaste={(e) => {
+                      const pasted = e.clipboardData.getData('text');
+                      if (pasted) {
+                        setPasteRawText(pasted);
+                        handleAutoFillSlotsFromText(pasted, true);
+                      }
+                    }}
+                    placeholder={`NGD SCRIM 5v5\nBO3 DRAFT\nLIST:\n1. xTriggered\n2. sintopia\n3. Tadashi\n4.hapon\n5. Db sion\n6. Setsuko.\n7.S\n8. Lucks\n9.HALIMAW\n10. Akira.`}
+                    rows={6}
+                    className="w-full p-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-cyan-500"
                   />
-                  <div className="flex justify-end gap-2">
+
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <button
                       type="button"
-                      onClick={() => setShowPasteBox(false)}
-                      className="min-h-[36px] px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 cursor-pointer"
+                      onClick={handleClipboardQuickPaste}
+                      className="min-h-[36px] px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-700 dark:text-[#00f2fe] font-bold text-xs flex items-center gap-1.5 cursor-pointer"
                     >
-                      {t.cancelBtn}
+                      <ClipboardPaste className="w-3.5 h-3.5 shrink-0" />
+                      <span>I-paste mula sa Clipboard</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleImportGcText}
-                      className="min-h-[36px] px-3.5 py-1.5 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold text-xs cursor-pointer"
-                    >
-                      {t.importBtn}
-                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowPasteBox(false)}
+                        className="min-h-[36px] px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 cursor-pointer"
+                      >
+                        {t.cancelBtn}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAutoFillSlotsFromText(pasteRawText, true)}
+                        className="min-h-[36px] px-4 py-1.5 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold text-xs cursor-pointer shadow-xs"
+                      >
+                        ⚡ I-fill sa mga Slots (1–10)
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -3312,117 +3091,145 @@ export default function App() {
               </div>
             )}
 
-            {/* Record Battle Result (Screenshot Auto-Reader + MVP/SVP + Kill Score + Winner) */}
+            {/* Record Battle Result (Manual Scoring: MVP/SVP + Kill Score + Winner) */}
             <section className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs overflow-hidden">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3.5">
                 <div className="min-w-0">
                   <h3 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white flex items-center gap-2">
                     <Trophy className="w-4 h-4 text-[#f1c40f] shrink-0" />
-                    <span className="truncate">{t.finishMatchTitle}</span>
+                    <span className="truncate">🏆 I-record ang Resulta ng Laban (Manual Scoring)</span>
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    {t.finishMatchDesc}
+                    Piliin ang nanalo (Team Blue o Red), i-set ang MVP/SVP, at i-record ang score at tagal ng laro.
                   </p>
                 </div>
 
-                {/* Upload MLBB Battle Result Screenshot Button */}
-                <div className="shrink-0 w-full sm:w-auto">
-                  <input
-                    id="mlbb-battle-screenshot-input"
-                    ref={screenshotInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    disabled={isScanningScreenshot}
-                    onChange={handleUploadBattleScreenshot}
-                    className="sr-only"
-                  />
-                  <label
-                    htmlFor="mlbb-battle-screenshot-input"
-                    className={`w-full sm:w-auto min-h-[42px] px-4 py-2 rounded-xl bg-[#f1c40f] hover:bg-yellow-300 text-slate-950 font-display font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 select-none ${
-                      isScanningScreenshot
-                        ? 'opacity-60 pointer-events-none'
-                        : 'cursor-pointer'
-                    }`}
-                  >
-                    {isScanningScreenshot ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                        <span className="truncate">
-                          {t.scanningScreenshotText}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <Camera className="w-4 h-4 stroke-[2.3] shrink-0" />
-                        <span className="truncate">
-                          {t.uploadScreenshotBtn}
-                        </span>
-                      </>
-                    )}
-                  </label>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowManualStatsEditor((v) => !v)}
+                  className="min-h-[38px] px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-xs text-slate-700 dark:text-slate-300 font-semibold flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <span>{showManualStatsEditor ? '▲ Itago ang Player Stats' : '✏️ Detalyadong Player Stats (KDA / Damage)'}</span>
+                </button>
               </div>
 
-              {/* Scanned Screenshot Preview Banner (Appears after uploading screenshot) */}
-              {scannedPreviewUrl && scannedDetectedWinner && (
-                <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/35 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <img
-                      src={scannedPreviewUrl}
-                      alt="Scanned MLBB Battle Result"
-                      className="w-20 h-12 object-cover rounded-lg border border-emerald-500/40 shrink-0"
-                    />
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                        <Sparkles className="w-3.5 h-3.5 shrink-0" />
-                        <span className="truncate">{t.scannedReadyBadge}</span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono text-slate-700 dark:text-slate-300">
-                        <button
-                          type="button"
-                          onClick={() => setScannedDetectedWinner('Blue')}
-                          className={`px-2 py-0.5 rounded-md font-bold transition cursor-pointer ${
-                            scannedDetectedWinner === 'Blue'
-                              ? 'bg-cyan-500 text-slate-950'
-                              : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                          }`}
-                        >
-                          🔵 Blue Won
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setScannedDetectedWinner('Red')}
-                          className={`px-2 py-0.5 rounded-md font-bold transition cursor-pointer ${
-                            scannedDetectedWinner === 'Red'
-                              ? 'bg-rose-500 text-white'
-                              : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                          }`}
-                        >
-                          🔴 Red Won
-                        </button>
-                        <span>
-                          · ⚔️ {blueKillsInput || 0} - {redKillsInput || 0}
-                          {matchDurationInput ? ` (${matchDurationInput})` : ''} ·
-                          👑 MVP:{' '}
-                          {scannedDetectedWinner === 'Blue'
-                            ? blueStarIgn
-                            : redStarIgn}
-                        </span>
-                      </div>
-                    </div>
+              {/* Optional Player Detailed Stats Editor (KDA, Damage, Gold) */}
+              {showManualStatsEditor && (
+                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
+                    <span>Manual Player Performance (Opsyonal)</span>
+                    <span className="text-[11px] text-slate-500 font-normal">Maaaring mag-enter ng KDA (e.g. 10/2/8), Damage, o Gold</span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleFinishMatch(scannedDetectedWinner)}
-                    className="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
-                  >
-                    <Check className="w-4 h-4 stroke-[2.5] shrink-0" />
-                    <span className="truncate">
-                      {t.confirmScannedWinnerBtn} (Team {scannedDetectedWinner})
-                    </span>
-                  </button>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    {/* Team Blue Players Stats */}
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-bold text-cyan-600 dark:text-[#00f2fe] flex items-center gap-1">
+                        <span>🔵 Team Blue Players</span>
+                      </div>
+                      {liveMatch.teamBlue.map((p, idx) => (
+                        <div key={`blue-stat-${idx}`} className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2 text-xs">
+                          <span className="font-bold min-w-[70px] truncate">{p.ign}</span>
+                          <input
+                            type="text"
+                            placeholder="KDA (e.g. 8/2/11)"
+                            value={p.kda || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setLiveMatch((prev) => {
+                                const tb = [...prev.teamBlue];
+                                tb[idx] = { ...tb[idx], kda: val };
+                                return { ...prev, teamBlue: tb };
+                              });
+                            }}
+                            className="w-24 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Hero Dmg"
+                            value={p.heroDamage ? String(p.heroDamage) : ''}
+                            onChange={(e) => {
+                              const num = parseInt(e.target.value.replace(/,/g, ''), 10) || 0;
+                              setLiveMatch((prev) => {
+                                const tb = [...prev.teamBlue];
+                                tb[idx] = { ...tb[idx], heroDamage: num };
+                                return { ...prev, teamBlue: tb };
+                              });
+                            }}
+                            className="w-20 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Gold"
+                            value={p.gold ? String(p.gold) : ''}
+                            onChange={(e) => {
+                              const num = parseInt(e.target.value.replace(/,/g, ''), 10) || 0;
+                              setLiveMatch((prev) => {
+                                const tb = [...prev.teamBlue];
+                                tb[idx] = { ...tb[idx], gold: num };
+                                return { ...prev, teamBlue: tb };
+                              });
+                            }}
+                            className="w-18 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
+                          />
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Team Red Players Stats */}
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                        <span>🔴 Team Red Players</span>
+                      </div>
+                      {liveMatch.teamRed.map((p, idx) => (
+                        <div key={`red-stat-${idx}`} className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2 text-xs">
+                          <span className="font-bold min-w-[70px] truncate">{p.ign}</span>
+                          <input
+                            type="text"
+                            placeholder="KDA (e.g. 5/4/6)"
+                            value={p.kda || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setLiveMatch((prev) => {
+                                const tr = [...prev.teamRed];
+                                tr[idx] = { ...tr[idx], kda: val };
+                                return { ...prev, teamRed: tr };
+                              });
+                            }}
+                            className="w-24 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Hero Dmg"
+                            value={p.heroDamage ? String(p.heroDamage) : ''}
+                            onChange={(e) => {
+                              const num = parseInt(e.target.value.replace(/,/g, ''), 10) || 0;
+                              setLiveMatch((prev) => {
+                                const tr = [...prev.teamRed];
+                                tr[idx] = { ...tr[idx], heroDamage: num };
+                                return { ...prev, teamRed: tr };
+                              });
+                            }}
+                            className="w-20 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Gold"
+                            value={p.gold ? String(p.gold) : ''}
+                            onChange={(e) => {
+                              const num = parseInt(e.target.value.replace(/,/g, ''), 10) || 0;
+                              setLiveMatch((prev) => {
+                                const tr = [...prev.teamRed];
+                                tr[idx] = { ...tr[idx], gold: num };
+                                return { ...prev, teamRed: tr };
+                              });
+                            }}
+                            className="w-18 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -3691,7 +3498,16 @@ export default function App() {
               </div>
 
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto min-w-0">
-                <div className="relative w-full sm:w-48 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setShowLeaderboardSummaryModal(true)}
+                  className="min-h-[36px] px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-yellow-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer shrink-0"
+                >
+                  <Trophy className="w-3.5 h-3.5 shrink-0" />
+                  <span>🏆 GC Leaderboards Summary / Sync</span>
+                </button>
+
+                <div className="relative w-full sm:w-44 min-w-0">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
@@ -4530,6 +4346,59 @@ export default function App() {
             redAvgWr: redTeamAvgWr,
           }}
           onClose={() => setLineupPosterModalOpen(false)}
+        />
+      )}
+
+      {/* Scrim Results & Messenger GC Leaderboards Modal */}
+      {showLeaderboardSummaryModal && (
+        <LeaderboardSummaryModal
+          matchHistory={matchHistory}
+          players={players}
+          onClose={() => setShowLeaderboardSummaryModal(false)}
+          onCopiedToast={(msg) => triggerToast(msg)}
+          onImportLeaderboardStats={(importedStats) => {
+            setPlayers((prev) => {
+              const next = [...prev];
+              for (const s of importedStats) {
+                const idx = next.findIndex(
+                  (p) => p.ign.toLowerCase() === s.ign.toLowerCase()
+                );
+                if (idx !== -1) {
+                  next[idx] = {
+                    ...next[idx],
+                    mythicStars: Math.max(50, Math.round(s.overallRating / 10)),
+                    wins: Math.max(next[idx].wins, s.wins),
+                    mvpCount: Math.max(next[idx].mvpCount || 0, s.mvps),
+                  };
+                } else {
+                  next.push({
+                    id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    ign: s.ign,
+                    squadTag: 'NGD',
+                    primaryRole: 'Flex Role',
+                    secondaryRole: 'Flex Role',
+                    roleLabel: 'Multi',
+                    wins: s.wins || 5,
+                    losses: Math.max(1, (s.games || 8) - (s.wins || 5)),
+                    mvpCount: s.mvps || 1,
+                    streak: 1,
+                    roleCounts: {
+                      Jungle: 1,
+                      'EXP Lane': 1,
+                      'Mid Lane': 1,
+                      'Gold Lane': 1,
+                      Roamer: 1,
+                      'Flex Role': 1,
+                    },
+                    recentForm: ['W'],
+                    signatureHeroes: [],
+                    mythicStars: Math.max(50, Math.round(s.overallRating / 10)),
+                  });
+                }
+              }
+              return next;
+            });
+          }}
         />
       )}
 

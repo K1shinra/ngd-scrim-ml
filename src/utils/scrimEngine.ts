@@ -473,8 +473,32 @@ export function autoBalanceCurrentParticipants(
   };
 }
 
+export function cleanPlayerIgn(rawName: string): string {
+  if (!rawName) return '';
+  let cleaned = rawName
+    .replace(/[♂♀]/g, ' ')
+    .replace(/[【】\[\]()]/g, ' ')
+    // Strip common MLBB tournament/squad acronym prefixes if strictly matching known squad tags
+    .replace(
+      /^(?:DND|POSE|EXE|NGD|HATE|RSG|ECHO|BREN|TLPH|APBR|TNC|BLCK|OMG|NXPE|PRX|RRQ|EVOS|ONIC)\b[\s._-]*/i,
+      ''
+    )
+    .trim();
+
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  return cleaned || rawName.trim();
+}
+
+export function detectSeriesFormatFromText(rawText: string): 'BO1' | 'BO3' | 'BO5' | null {
+  if (/\bBO5\b/i.test(rawText)) return 'BO5';
+  if (/\bBO3\b/i.test(rawText)) return 'BO3';
+  if (/\bBO1\b/i.test(rawText)) return 'BO1';
+  return null;
+}
+
 export function parseTraditionalGcText(
-  rawText: string
+  rawText: string,
+  knownPlayers?: PlayerProfile[]
 ): { slotNum: number; ign: string; role: MlbbRole; secondaryRole?: MlbbRole; roleLabel: string }[] {
   const results: {
     slotNum: number;
@@ -499,26 +523,143 @@ export function parseTraditionalGcText(
   };
 
   const lines = rawText.split(/\r?\n/);
+  const numberedEntries: { slotNum: number; raw: string }[] = [];
+  const unnumberedCandidates: string[] = [];
+  let isUnderListHeader = false;
+
   for (const line of lines) {
-    const match = line.match(/^\s*(\d{1,2})\.\s*([^-–—:]+?)\s*[-–—:]\s*(.+)$/);
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Check if entering a list section e.g. "LIST:", "DROP IGN ONLY"
+    if (/^LIST\s*:/i.test(trimmed)) {
+      isUnderListHeader = true;
+      continue;
+    }
+
+    // Matches any numbered list pattern, e.g.:
+    // "1. xTriggered"
+    // "4.hapon"
+    // "7.S"
+    // "1) Tadashi"
+    // "1. Estranghero - Jungler/Roam"
+    // "1. Setsuko. (Gold/Mid)"
+    // "1 - Akira"
+    const match = trimmed.match(
+      /^[\s(]*(\d{1,2})[\s.)\-]*(?:[.\-–—:])?\s*([^\n\r]+)$/
+    );
+
     if (match) {
       const slotNum = parseInt(match[1], 10);
-      const ign = match[2].trim();
-      const rawRoles = match[3].replace(/[✅⏳]/g, '').trim();
-      if (slotNum >= 1 && slotNum <= 20 && ign) {
-        const parts = rawRoles.split(/[\/,&]+/);
-        const primary = detectRoleToken(parts[0] || '') || 'Flex Role';
-        const secondary = parts[1] ? detectRoleToken(parts[1]) || undefined : undefined;
-        results.push({
-          slotNum,
-          ign,
-          role: primary,
-          secondaryRole: secondary,
-          roleLabel: formatRolePairText(primary, secondary),
-        });
+      if (slotNum >= 1 && slotNum <= 20) {
+        numberedEntries.push({ slotNum, raw: match[2].trim() });
+        continue;
       }
     }
+
+    // If not numbered, but under a "LIST:" header and not another header
+    if (
+      isUnderListHeader &&
+      !/^(?:NGD|BO\d|DROP|OCTOBER|NOVEMBER|DECEMBER|JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER)\b/i.test(
+        trimmed
+      )
+    ) {
+      unnumberedCandidates.push(trimmed);
+    }
   }
+
+  // If we found numbered entries, use them
+  if (numberedEntries.length > 0) {
+    for (const item of numberedEntries) {
+      const rest = item.raw;
+      let rawIgn = rest;
+      let rolePart = '';
+
+      const splitDash = rest.split(/\s*[-–—:]\s*(.+)/);
+      if (splitDash.length >= 2) {
+        rawIgn = splitDash[0];
+        rolePart = splitDash[1];
+      } else {
+        const parenMatch = rest.match(/^(.+?)\s*\(([^)]+)\)$/);
+        if (parenMatch) {
+          rawIgn = parenMatch[1];
+          rolePart = parenMatch[2];
+        }
+      }
+
+      const cleanIgn = cleanPlayerIgn(rawIgn);
+      if (!cleanIgn) continue;
+
+      let primary: MlbbRole = 'Flex Role';
+      let secondary: MlbbRole | undefined = undefined;
+
+      if (rolePart) {
+        const parts = rolePart.replace(/[✅⏳]/g, '').split(/[\/,&]+/);
+        primary = detectRoleToken(parts[0] || '') || 'Flex Role';
+        secondary = parts[1]
+          ? detectRoleToken(parts[1]) || undefined
+          : undefined;
+      } else if (knownPlayers && knownPlayers.length > 0) {
+        const found = knownPlayers.find(
+          (p) =>
+            p.ign.toLowerCase() === cleanIgn.toLowerCase() ||
+            cleanIgn.toLowerCase().includes(p.ign.toLowerCase()) ||
+            p.ign.toLowerCase().includes(cleanIgn.toLowerCase())
+        );
+        if (found) {
+          primary = found.primaryRole;
+          secondary =
+            found.secondaryRole !== found.primaryRole
+              ? found.secondaryRole
+              : undefined;
+        }
+      }
+
+      results.push({
+        slotNum: item.slotNum,
+        ign: cleanIgn,
+        role: primary,
+        secondaryRole: secondary,
+        roleLabel: formatRolePairText(primary, secondary),
+      });
+    }
+  } else if (unnumberedCandidates.length > 0) {
+    // Fill slots 1, 2, 3... from sequential non-numbered candidates
+    let slotIdx = 1;
+    for (const cand of unnumberedCandidates.slice(0, 20)) {
+      const cleanIgn = cleanPlayerIgn(cand);
+      if (!cleanIgn) continue;
+
+      let primary: MlbbRole = 'Flex Role';
+      let secondary: MlbbRole | undefined = undefined;
+
+      if (knownPlayers && knownPlayers.length > 0) {
+        const found = knownPlayers.find(
+          (p) =>
+            p.ign.toLowerCase() === cleanIgn.toLowerCase() ||
+            cleanIgn.toLowerCase().includes(p.ign.toLowerCase()) ||
+            p.ign.toLowerCase().includes(cleanIgn.toLowerCase())
+        );
+        if (found) {
+          primary = found.primaryRole;
+          secondary =
+            found.secondaryRole !== found.primaryRole
+              ? found.secondaryRole
+              : undefined;
+        }
+      }
+
+      results.push({
+        slotNum: slotIdx,
+        ign: cleanIgn,
+        role: primary,
+        secondaryRole: secondary,
+        roleLabel: formatRolePairText(primary, secondary),
+      });
+      slotIdx++;
+    }
+  }
+
   return results;
 }
 

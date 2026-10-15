@@ -183,33 +183,36 @@ export async function analyzeMlbbScreenshot(params: {
 
   const promptText = `Analyze the provided Mobile Legends: Bang Bang (MLBB) post-match Battle Result screenshot(s).
 The screenshots can be:
-- The DATA screen (columns: Hero Avatar/IGN, Hero Damage + %, Damage Taken + %, Turret Damage/Push + %, Teamfight Rate %, Gold/Net Worth).
-- The SCOREBOARD/EQUIPMENT screen (columns: Hero Avatar/IGN, KDA e.g. 12/2/8, Medal Rating e.g. 10.5, Gold, Items).
+- The SCOREBOARD/EQUIPMENT screen (shows both teams with Hero Avatars, IGNs, KDAs, Gold, Items, Medal badges, team kills at top, match duration, and Victory/Defeat banner).
+- The DATA screen (columns: Hero Damage %, Damage Taken %, Turret Damage %, Teamfight Rate %, Gold).
 - Or both uploaded together.
 
-Instructions:
-1. Team Blue is on the left side (5 players, ordered top-to-bottom).
-2. Team Red is on the right side (5 players, ordered top-to-bottom).
-3. Winner: Look at the top banner (VICTORY on left = Blue won; VICTORY on right / DEFEAT on left = Red won) or the gold winning MVP crown badge vs losing Defeat MVP (SVP) badge. Winner must be 'Blue' or 'Red'.
+Layout Instructions:
+1. Team Blue is on the LEFT column (5 players, ordered top-to-bottom).
+   - Each row has: [Hero Avatar + Flag] -> [Player IGN] -> [KDA e.g. 1 4 15] -> [Gold] -> [Medal Emblem & Rating e.g. 7.8].
+   - Extract the exact in-game name (strip gender icons ♂/♀, country flags 🇵🇭🇺🇸, and level circles).
+2. Team Red is on the RIGHT column (5 players, ordered top-to-bottom).
+   - Each row has: [Medal Emblem & Rating] -> [Gold] -> [KDA] -> [Equipment Items] -> [Player IGN] -> [Hero Avatar + Flag].
+   - Extract the exact in-game name displayed near the Hero Avatar on the right side.
+3. Winner & Match Outcome:
+   - Winner must be 'Blue' or 'Red'.
+   - Look at the banner in the top center:
+     * If banner says "DEFEAT" (and the left team's top player has Defeat MVP / SVP, while right team has the colorful winning MVP crown e.g. rating 11.9): winner is 'Red'.
+     * If banner says "VICTORY": winner is 'Blue'.
+     * Compare team kill scores at the top (e.g., 25 on left vs 26 on right): higher kills usually belongs to the winning team.
 4. Score & Duration:
-   - Blue kills & Red kills (big team score numbers at the top). If only the Data screen is uploaded without kills, estimate or default to 0.
-   - Duration (MM:SS, e.g. "17:44" or "15:03" usually at the top right).
+   - Blue kills (big number on the top left, e.g. 25).
+   - Red kills (big number on the top right, e.g. 26).
+   - Duration (MM:SS, e.g. "15:15" at the top right near the date).
 5. For each player on Team Blue and Team Red (in exact top-to-bottom order):
-   - ign: Player's exact in-game name (strip gender icons ♂/♀ and decorative bracket artifacts).
-   - kda: "K/D/A" string (e.g. "12/2/2", "1/7/4"). If on Data screen without KDA, format as "34% DMG · 65% TF".
-   - rating: Medal rating number (e.g. "10.8", "7.4", "3.2").
+   - ign: Player's exact in-game name.
+   - kda: "K/D/A" string (e.g. "1/4/15", "12/1/9", "13/5/6").
+   - rating: Medal rating number (e.g. "10.0", "11.9", "7.8").
    - medal: "MVP", "SVP", "Gold", "Silver", or "Bronze" based on the medal emblem.
-   - heroDamage: Raw hero damage dealt number if visible (e.g. 104231).
-   - heroDamagePct: Percentage of team damage (e.g. 37 for 37%).
-   - damageTaken: Raw damage taken number if visible (e.g. 89450).
-   - damageTakenPct: Percentage of team damage taken (e.g. 31 for 31%).
-   - turretDamage: Raw turret push damage number if visible (e.g. 5600).
-   - turretDamagePct: Percentage of turret damage (e.g. 45 for 45%).
-   - teamfightPct: Teamfight participation rate (e.g. 74 for 74%).
-   - gold: Total gold if visible.
-   - isMvp: true ONLY for the 1 best player on Team Blue and the 1 best player on Team Red.
-   - isFeeder: true for the player with lowest score, bronze medal, or most deaths.
-6. Identify mvpIgn (winning team's MVP), svpIgn (losing team's Defeat MVP), and feederIgn (player with bronze medal / lowest score / feeder in the match).${knownRosterHint}`;
+   - gold: Total gold (e.g. 9145, 12717).
+   - isMvp: true for the winning team's MVP and true for the losing team's SVP/Defeat MVP.
+   - isFeeder: true for the player with lowest score / bronze medal / most deaths.
+6. Identify mvpIgn (winning team's MVP, e.g. Lux.), svpIgn (losing team's Defeat MVP, e.g. DND Setsuko.), and feederIgn (lowest bronze player).${knownRosterHint}`;
 
   const contents = {
     parts: [

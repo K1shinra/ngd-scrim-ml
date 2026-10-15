@@ -234,7 +234,7 @@ Powered by NGD Queue Master`;
             <Layers className="w-10 h-10 mx-auto text-slate-600 mb-2" />
             <p className="font-semibold text-slate-300">No matches found</p>
             <p className="text-xs text-slate-500 mt-1">
-              Try adjusting your search query or upload a match screenshot to record battle results.
+              Try adjusting your search query or record battle results in the 5v5 Match tab.
             </p>
           </div>
         ) : (
