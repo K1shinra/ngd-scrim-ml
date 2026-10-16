@@ -42,7 +42,7 @@ interface CandidateEntry {
 }
 
 export function autoBalance5v5(
-  poolSource: 'batch1' | 'batch2' | 'queue_and_slots',
+  poolSource: 'batch1' | 'batch2' | 'queue_and_slots' | number,
   slots: (ScrimSlot | null)[],
   queue: QueuedPlayer[],
   players: PlayerProfile[],
@@ -68,7 +68,13 @@ export function autoBalance5v5(
     });
   };
 
-  if (poolSource === 'batch1') {
+  if (typeof poolSource === 'number') {
+    const start = Math.max(0, (poolSource - 1) * 10);
+    for (let i = start; i < start + 10; i++) {
+      const s = slots[i];
+      if (s) pushUnique(s.ign, s.role, s.secondaryRole, s.roleLabel);
+    }
+  } else if (poolSource === 'batch1') {
     for (let i = 0; i < 10; i++) {
       const s = slots[i];
       if (s) pushUnique(s.ign, s.role, s.secondaryRole, s.roleLabel);
@@ -232,11 +238,13 @@ export function autoBalance5v5(
       : 0;
 
   const sourceLabel =
-    poolSource === 'batch1'
-      ? 'Lobby 1 (Slots 1–10)'
-      : poolSource === 'batch2'
-        ? 'Lobby 2 (Slots 11–20)'
-        : 'All Ready Players';
+    typeof poolSource === 'number'
+      ? `Game ${poolSource} (Slots ${(poolSource - 1) * 10 + 1}–${poolSource * 10})`
+      : poolSource === 'batch1'
+        ? 'Game 1 (Slots 1–10)'
+        : poolSource === 'batch2'
+          ? 'Game 2 (Slots 11–20)'
+          : 'All Ready Players';
 
   return {
     teamBlue,
@@ -248,11 +256,16 @@ export function autoBalance5v5(
 }
 
 export function buildDirectLineup5v5(
-  poolSource: 'batch1' | 'batch2',
+  poolSource: 'batch1' | 'batch2' | number,
   slots: (ScrimSlot | null)[],
   players: PlayerProfile[]
 ): BalanceResult {
-  const startIdx = poolSource === 'batch1' ? 0 : 10;
+  const startIdx =
+    typeof poolSource === 'number'
+      ? Math.max(0, (poolSource - 1) * 10)
+      : poolSource === 'batch1'
+        ? 0
+        : 10;
 
   const assignTeamLanes = (rawSlots: (ScrimSlot | null)[], fallbackOffset: number): MatchParticipant[] => {
     const entries: CandidateEntry[] = [];
@@ -549,13 +562,13 @@ export function parseTraditionalGcText(
       /^[\s(]*(\d{1,2})[\s.)\-]*(?:[.\-–—:])?\s*([^\n\r]+)$/
     );
 
-    if (match) {
-      const slotNum = parseInt(match[1], 10);
-      if (slotNum >= 1 && slotNum <= 20) {
-        numberedEntries.push({ slotNum, raw: match[2].trim() });
-        continue;
+      if (match) {
+        const slotNum = parseInt(match[1], 10);
+        if (slotNum >= 1 && slotNum <= 50) {
+          numberedEntries.push({ slotNum, raw: match[2].trim() });
+          continue;
+        }
       }
-    }
 
     // If not numbered, but under a "LIST:" header and not another header
     if (
@@ -576,14 +589,16 @@ export function parseTraditionalGcText(
       let rolePart = '';
 
       const splitDash = rest.split(/\s*[-–—:]\s*(.+)/);
-      if (splitDash.length >= 2) {
+      if (splitDash.length >= 2 && detectRoleToken(splitDash[1])) {
         rawIgn = splitDash[0];
         rolePart = splitDash[1];
       } else {
         const parenMatch = rest.match(/^(.+?)\s*\(([^)]+)\)$/);
-        if (parenMatch) {
+        if (parenMatch && detectRoleToken(parenMatch[2])) {
           rawIgn = parenMatch[1];
           rolePart = parenMatch[2];
+        } else {
+          rawIgn = rest;
         }
       }
 
@@ -626,7 +641,7 @@ export function parseTraditionalGcText(
   } else if (unnumberedCandidates.length > 0) {
     // Fill slots 1, 2, 3... from sequential non-numbered candidates
     let slotIdx = 1;
-    for (const cand of unnumberedCandidates.slice(0, 20)) {
+    for (const cand of unnumberedCandidates.slice(0, 50)) {
       const cleanIgn = cleanPlayerIgn(cand);
       if (!cleanIgn) continue;
 
@@ -667,29 +682,25 @@ export function formatGcText(
   slots: (ScrimSlot | null)[],
   queue: QueuedPlayer[],
   liveMatch: LiveMatchState,
-  mode: 'warmup' | 'palist' | 'match' | 'full' = 'warmup'
+  mode: 'warmup' | 'palist' | 'match' | 'full' = 'warmup',
+  activeSetCount: number = 2
 ): string {
   const lines: string[] = [];
+  const safeSetCount = Math.max(1, Math.min(5, activeSetCount));
 
   if (mode === 'warmup') {
     lines.push('Scrim warmup');
-    lines.push('');
-    for (let i = 0; i < 10; i++) {
-      const s = slots[i];
-      if (s) {
-        lines.push(`${i + 1}. ${s.ign} - ${s.roleLabel}`);
-      } else {
-        lines.push(`${i + 1}. `);
-      }
-    }
-    const batch2Filled = slots.slice(10, 20).some(Boolean);
-    if (batch2Filled) {
+    for (let s = 0; s < safeSetCount; s++) {
       lines.push('');
-      lines.push('Batch 2 (Next Game):');
-      for (let i = 10; i < 20; i++) {
-        const s = slots[i];
-        if (s) {
-          lines.push(`${i + 1}. ${s.ign} - ${s.roleLabel}`);
+      if (s === 0) {
+        lines.push('Game 1 (Slots 1–10):');
+      } else {
+        lines.push(`Batch ${s + 1} / Game ${s + 1} (Slots ${s * 10 + 1}–${s * 10 + 10}):`);
+      }
+      for (let i = s * 10; i < s * 10 + 10; i++) {
+        const item = slots[i];
+        if (item) {
+          lines.push(`${i + 1}. ${item.ign} - ${item.roleLabel}`);
         } else {
           lines.push(`${i + 1}. `);
         }
@@ -698,36 +709,32 @@ export function formatGcText(
     return lines.join('\n');
   }
 
-  const filledCount = slots.filter(Boolean).length;
+  const totalSlots = safeSetCount * 10;
+  const filledCount = slots.slice(0, totalSlots).filter(Boolean).length;
   lines.push('⚔️ NGD SCRIM WARMUP & 5v5 SYSTEM ⚔️');
   lines.push('🏆 NextGen Dominator (Since 2019)');
   lines.push('━━━━━━━━━━━━━━━━━━━━━━');
 
   if (mode === 'palist' || mode === 'full') {
-    lines.push(`📋 OFFICIAL 1–20 PLAYER LIST (${filledCount}/20 READY)`);
-    lines.push('');
-    lines.push('🔥 [LOBBY 1 · 5v5 FRIENDLY GAME (SLOTS 1–10)]');
-    for (let i = 0; i < 10; i++) {
-      const slot = slots[i];
-      if (slot) {
-        lines.push(
-          `${i + 1}. ${slot.ign} - ${slot.roleLabel} ${slot.isReady ? '✅' : '⏳'}`
-        );
-      } else {
-        lines.push(`${i + 1}. [OPEN SLOT — Tap to Join]`);
-      }
-    }
-
-    lines.push('');
-    lines.push('⚡ [LOBBY 2 · NEXT BATCH (SLOTS 11–20)]');
-    for (let i = 10; i < 20; i++) {
-      const slot = slots[i];
-      if (slot) {
-        lines.push(
-          `${i + 1}. ${slot.ign} - ${slot.roleLabel} ${slot.isReady ? '✅' : '⏳'}`
-        );
-      } else {
-        lines.push(`${i + 1}. [OPEN SLOT — Tap to Join]`);
+    lines.push(`📋 OFFICIAL 1–${totalSlots} PLAYER LIST (${filledCount}/${totalSlots} READY)`);
+    for (let s = 0; s < safeSetCount; s++) {
+      lines.push('');
+      const badge =
+        s === 0
+          ? '🔥 [GAME 1 · PLAYING NOW]'
+          : s === 1
+            ? '⚡ [GAME 2 · WAITING IN LINE]'
+            : `⚡ [GAME ${s + 1} · BATCH ${s + 1}]`;
+      lines.push(`${badge} (SLOTS ${s * 10 + 1}–${s * 10 + 10})`);
+      for (let i = s * 10; i < s * 10 + 10; i++) {
+        const slot = slots[i];
+        if (slot) {
+          lines.push(
+            `${i + 1}. ${slot.ign} - ${slot.roleLabel} ${slot.isReady ? '✅' : '⏳'}`
+          );
+        } else {
+          lines.push(`${i + 1}. [OPEN SLOT — Tap to Join]`);
+        }
       }
     }
 

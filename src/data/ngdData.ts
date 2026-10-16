@@ -487,9 +487,14 @@ export const INITIAL_PLAYERS: PlayerProfile[] = [
   },
 ];
 
+export const MAX_SETS = 5;
+export const SLOTS_PER_SET = 10;
+export const MAX_SLOTS = MAX_SETS * SLOTS_PER_SET; // 50
+
 // Pre-populated with the exact 10 "Scrim warmup" entries from the user's GC + 2 in Batch 2!
+// Up to 5 Sets of 10 players each (Slots 1–50)
 export const INITIAL_SLOTS: (ScrimSlot | null)[] = Array.from(
-  { length: 20 },
+  { length: MAX_SLOTS },
   (_, idx) => {
     const num = idx + 1;
     const warmupPreset: Record<

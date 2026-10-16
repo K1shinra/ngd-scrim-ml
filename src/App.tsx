@@ -36,6 +36,10 @@ import {
   Zap,
   Share2,
   Scale,
+  Edit3,
+  Plus,
+  Minus,
+  Layers,
 } from 'lucide-react';
 import { GameStatsTab } from './components/GameStatsTab';
 import { useAuth } from './context/AuthContext';
@@ -57,6 +61,9 @@ import {
   INITIAL_PLAYERS,
   INITIAL_QUEUE,
   INITIAL_SLOTS,
+  MAX_SETS,
+  MAX_SLOTS,
+  SLOTS_PER_SET,
   LiveMatchState,
   MLBB_ROLES,
   MatchHistoryRecord,
@@ -83,6 +90,8 @@ import {
 } from './utils/scrimEngine';
 import { MatchPosterModal, PosterTemplate } from './components/MatchPosterModal';
 import { LeaderboardSummaryModal } from './components/LeaderboardSummaryModal';
+import { ManualStatsEditor } from './components/ManualStatsEditor';
+import { EditMatchStatsModal } from './components/EditMatchStatsModal';
 
 type ActiveTab = 'queue' | 'match' | 'stats' | 'leaderboard' | 'settings';
 type LeaderboardSort = 'wins' | 'mvp' | 'winrate' | 'matches';
@@ -98,6 +107,7 @@ const STORAGE_KEYS = {
   theme: 'ngd_scrim_theme_v1',
   lang: 'ngd_scrim_lang_v1',
   adminUnlocked: 'ngd_scrim_admin_v1',
+  setCount: 'ngd_scrim_set_count_v1',
 };
 
 const ADMIN_EMAILS = ['esparagojm@gmail.com'];
@@ -116,8 +126,8 @@ function isValidAdminPin(pin: string): boolean {
 const TRANSLATIONS = {
   en: {
     brandTitle: 'NGD Scrim System',
-    navSlots: '1–20 Player Slots',
-    navSlotsShort: '1–20 Slots',
+    navSlots: 'Player Slots (Games 1–5)',
+    navSlotsShort: 'Player Slots',
     navMatch: '5v5 Team Shuffle',
     navMatchShort: '5v5 Match',
     navStats: '📊 Game Stats & Posters',
@@ -289,8 +299,8 @@ const TRANSLATIONS = {
   },
   tl: {
     brandTitle: 'NGD Scrim System',
-    navSlots: '1–20 Listahan ng Lalaro',
-    navSlotsShort: '1–20 Listahan',
+    navSlots: 'Mga Slots ng Lalaro (Games 1–5)',
+    navSlotsShort: 'Player Slots',
     navMatch: '5v5 Kampihan',
     navMatchShort: '5v5 Laro',
     navStats: '📊 Game Stats at Posters',
@@ -770,9 +780,29 @@ export default function App() {
 
   // Navigation & UI State
   const [activeTab, setActiveTab] = useState<ActiveTab>('queue');
-  const [mobileBatchView, setMobileBatchView] = useState<
-    'both' | 'first10' | 'next10'
-  >('both');
+  const [activeSetCount, setActiveSetCount] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.setCount);
+      return saved ? Math.max(1, Math.min(5, parseInt(saved, 10))) : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const [activeSetTab, setActiveSetTab] = useState<'all' | number>('all');
+  const [editingMatchRecord, setEditingMatchRecord] = useState<MatchHistoryRecord | null>(null);
+  const [showAdminPinModal, setShowAdminPinModal] = useState(false);
+  const [adminModalPinInput, setAdminModalPinInput] = useState('');
+  const [adminModalError, setAdminModalError] = useState(false);
+  const [pendingEditMatch, setPendingEditMatch] = useState<MatchHistoryRecord | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.setCount, String(activeSetCount));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [activeSetCount]);
+
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Simple Palist Form State
@@ -1062,12 +1092,18 @@ export default function App() {
       }));
     }
 
+    const maxSlotNum = Math.max(...parsed.map((p) => p.slotNum), 0);
+    const neededSets = Math.min(5, Math.max(activeSetCount, Math.ceil(maxSlotNum / 10)));
+    if (neededSets > activeSetCount) {
+      setActiveSetCount(neededSets);
+    }
+
     const timeLabel = getCurrentTimeLabel();
     setSlots((prev) => {
       const next = [...prev];
       for (const entry of parsed) {
         const idx = entry.slotNum - 1;
-        if (idx >= 0 && idx < 20) {
+        if (idx >= 0 && idx < MAX_SLOTS) {
           next[idx] = {
             slotNumber: entry.slotNum,
             ign: entry.ign,
@@ -1123,6 +1159,32 @@ export default function App() {
     }
   };
 
+  // Global paste handler: When the user presses Ctrl+V anywhere on the page,
+  // automatically detect the 5v5 scrim list and immediately fill the slots!
+  useEffect(() => {
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      const activeEl = document.activeElement;
+      const tagName = (activeEl?.tagName || '').toLowerCase();
+      if (
+        tagName === 'input' ||
+        tagName === 'textarea' ||
+        (activeEl as HTMLElement)?.isContentEditable
+      ) {
+        return;
+      }
+      const text = e.clipboardData?.getData('text');
+      if (text && text.trim()) {
+        const handled = handleAutoFillSlotsFromText(text, true);
+        if (handled) {
+          e.preventDefault();
+        }
+      }
+    };
+
+    window.addEventListener('paste', handleGlobalPaste);
+    return () => window.removeEventListener('paste', handleGlobalPaste);
+  }, [players, language]);
+
   // --- SHUFFLE, DIRECT LINEUP (NO SHUFFLE) & SERIES FORMAT ---
 
   const handleSetSeriesFormat = (format: 'BO1' | 'BO3' | 'BO5') => {
@@ -1142,19 +1204,82 @@ export default function App() {
     }));
   };
 
+  const getSetFilledCount = (setIdx: number) => {
+    return slots.slice(setIdx * 10, setIdx * 10 + 10).filter((s) => s !== null).length;
+  };
+
+  const handlePromoteSetToGame1 = (fromSetIdx: number) => {
+    const fromStart = fromSetIdx * 10;
+    setSlots((prev) => {
+      const updated = [...prev];
+      for (let i = 0; i < 10; i++) {
+        const source = updated[fromStart + i];
+        if (source) {
+          updated[i] = {
+            ...source,
+            slotNumber: i + 1,
+          };
+        } else {
+          updated[i] = null;
+        }
+        updated[fromStart + i] = null;
+      }
+      return updated;
+    });
+    triggerToast(
+      language === 'tl'
+        ? `⚡ Na-promote ang Game ${fromSetIdx + 1} sa Game 1 (Playing Now)!`
+        : `⚡ Promoted Game ${fromSetIdx + 1} to Game 1 (Playing Now)!`
+    );
+  };
+
+  const handleClearSingleSet = (setIdx: number) => {
+    const start = setIdx * 10;
+    setSlots((prev) => {
+      const updated = [...prev];
+      for (let i = start; i < start + 10; i++) {
+        updated[i] = null;
+      }
+      return updated;
+    });
+    triggerToast(`Na-clear ang Game ${setIdx + 1} (Slots ${start + 1}–${start + 10}).`);
+  };
+
+  const handleCopySingleGameSet = async (setIdx: number) => {
+    const setNum = setIdx + 1;
+    const start = setIdx * 10;
+    const lines = [`NGD SCRIM 5v5 — GAME ${setNum} (Slots ${start + 1}–${start + 10})`, ''];
+    for (let i = start; i < start + 10; i++) {
+      const slot = slots[i];
+      if (slot) {
+        lines.push(`${i + 1}. ${slot.ign} - ${slot.roleLabel}`);
+      } else {
+        lines.push(`${i + 1}. [OPEN SLOT]`);
+      }
+    }
+    const text = lines.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      triggerToast(`Nakopya ang Game ${setNum} para sa GC!`);
+    } catch {
+      // fallback
+    }
+  };
+
   const handleStartDirectLineup5v5 = (
-    poolSource: 'batch1' | 'batch2' = 'batch1',
+    poolSource: 'batch1' | 'batch2' | number = 1,
     goToMatchTab = true
   ) => {
+    const setNumber = typeof poolSource === 'number' ? poolSource : poolSource === 'batch1' ? 1 : 2;
     const direct = buildDirectLineup5v5(poolSource, slots, players);
+    const startSlot = (setNumber - 1) * 10 + 1;
+    const endSlot = (setNumber - 1) * 10 + 10;
+    const midSlot = (setNumber - 1) * 10 + 5;
 
     setLiveMatch((prev) => ({
       ...prev,
       matchId: `CUSTOM-5V5-${String(matchHistory.length + 1).padStart(2, '0')}`,
-      roomName:
-        poolSource === 'batch1'
-          ? 'Custom 5v5 · Slot Order (Slots 1–5 vs 6–10)'
-          : 'Custom 5v5 · Slot Order (Slots 11–15 vs 16–20)',
+      roomName: `Custom 5v5 · Game ${setNumber} (${startSlot}–${midSlot} vs ${midSlot + 1}–${endSlot})`,
       startedAt: getCurrentTimeLabel(),
       teamBlue: direct.teamBlue,
       teamRed: direct.teamRed,
@@ -1169,18 +1294,19 @@ export default function App() {
       setActiveTab('match');
     }
     triggerToast(
-      `Lineup Ready (No Shuffle): Slots 1–5 (Blue) vs Slots 6–10 (Red)`
+      `Lineup Ready: Game ${setNumber} Slots ${startSlot}–${midSlot} (Blue) vs ${midSlot + 1}–${endSlot} (Red)`
     );
   };
 
   const handleShuffle5v5 = (
-    poolSource: 'batch1' | 'batch2' = 'batch1',
+    poolSource: 'batch1' | 'batch2' | number = 1,
     reRoll = false,
     goToMatchTab = false
   ) => {
     const nextSeed = reRoll ? shuffleCounter + 1 : 1;
     setShuffleCounter(nextSeed);
 
+    const setNumber = typeof poolSource === 'number' ? poolSource : poolSource === 'batch1' ? 1 : 2;
     const balanced = autoBalance5v5(
       poolSource,
       slots,
@@ -1192,17 +1318,14 @@ export default function App() {
     setLiveMatch((prev) => ({
       ...prev,
       matchId: `CUSTOM-5V5-${String(matchHistory.length + 1).padStart(2, '0')}`,
-      roomName:
-        poolSource === 'batch1'
-          ? 'Custom 5v5 · First 10 Players (Slots 1–10)'
-          : 'Custom 5v5 · Next 10 Players (Slots 11–20)',
+      roomName: `Custom 5v5 · Game ${setNumber} (Slots ${(setNumber - 1) * 10 + 1}–${setNumber * 10})`,
       startedAt: getCurrentTimeLabel(),
       teamBlue: balanced.teamBlue,
       teamRed: balanced.teamRed,
       mvpIgn: balanced.teamBlue[0]?.ign || 'joshy',
       shuffleNote: reRoll
-        ? `Shuffled Option #${nextSeed} · Blue ${balanced.blueAvgWr}% vs Red ${balanced.redAvgWr}%`
-        : `Balanced by Role & WR · Blue ${balanced.blueAvgWr}% vs Red ${balanced.redAvgWr}%`,
+        ? `Shuffled Game ${setNumber} Option #${nextSeed} · Blue ${balanced.blueAvgWr}% vs Red ${balanced.redAvgWr}%`
+        : `Game ${setNumber} Balanced by Role & WR · Blue ${balanced.blueAvgWr}% vs Red ${balanced.redAvgWr}%`,
       blueSeriesWins: goToMatchTab ? 0 : prev.blueSeriesWins || 0,
       redSeriesWins: goToMatchTab ? 0 : prev.redSeriesWins || 0,
     }));
@@ -1212,14 +1335,14 @@ export default function App() {
       setActiveTab('match');
     }
     triggerToast(
-      `5v5 Ready: Blue (${balanced.blueAvgWr}% WR) vs Red (${balanced.redAvgWr}% WR)`
+      `Game ${setNumber} 5v5 Ready: Blue (${balanced.blueAvgWr}% WR) vs Red (${balanced.redAvgWr}% WR)`
     );
   };
 
   const handleCopyGcText = async (
     mode: 'warmup' | 'palist' | 'match' = 'warmup'
   ) => {
-    const textToCopy = formatGcText(slots, queue, liveMatch, mode);
+    const textToCopy = formatGcText(slots, queue, liveMatch, mode, activeSetCount);
     try {
       await navigator.clipboard.writeText(textToCopy);
       setCopiedFlag(true);
@@ -1236,6 +1359,63 @@ export default function App() {
       setTimeout(() => setCopiedFlag(false), 2000);
       triggerToast(t.toastCopied);
     }
+  };
+
+  const handleOpenEditMatchStats = (record: MatchHistoryRecord) => {
+    if (isAdmin) {
+      setEditingMatchRecord(record);
+    } else {
+      setPendingEditMatch(record);
+      setAdminModalPinInput('');
+      setAdminModalError(false);
+      setShowAdminPinModal(true);
+    }
+  };
+
+  const handleVerifyAdminPinForEdit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (isValidAdminPin(adminModalPinInput)) {
+      setAdminPinUnlocked(true);
+      try {
+        localStorage.setItem(STORAGE_KEYS.adminUnlocked, 'true');
+      } catch {
+        // ignore storage error
+      }
+      setShowAdminPinModal(false);
+      setAdminModalError(false);
+      triggerToast(
+        language === 'tl'
+          ? '🔓 Naka-unlock na ang Developer Mode! Binuksan ang Match Stats Editor.'
+          : '🔓 Admin Mode unlocked! Opened Match Stats Editor.'
+      );
+      if (pendingEditMatch) {
+        setEditingMatchRecord(pendingEditMatch);
+        setPendingEditMatch(null);
+      }
+    } else {
+      setAdminModalError(true);
+      triggerToast(t.adminWrongPin);
+    }
+  };
+
+  const handleSaveEditedMatchRecord = (updated: MatchHistoryRecord) => {
+    if (!isAdmin) return;
+    setMatchHistory((prev) => {
+      const next = prev.map((m) => (m.id === updated.id ? updated : m));
+      try {
+        localStorage.setItem(STORAGE_KEYS.history, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    insertMatchHistoryToSupabase(updated).catch(() => {});
+    triggerToast(
+      language === 'tl'
+        ? `✅ Matagumpay na na-update ang mga stats ng ${updated.id}!`
+        : `✅ Successfully updated stats for ${updated.id}!`
+    );
+    setEditingMatchRecord(null);
   };
 
   // --- SWAP & FINISH MATCH ---
@@ -2292,177 +2472,401 @@ export default function App() {
               </form>
             </section>
 
-            {/* Mobile View Toggle (All 1-20 | First 10 | Next 10) */}
-            <div className="grid grid-cols-3 lg:hidden gap-1 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
-              <button
-                type="button"
-                onClick={() => setMobileBatchView('both')}
-                className={`min-h-[40px] py-2 px-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition truncate cursor-pointer ${
-                  mobileBatchView === 'both'
-                    ? 'bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white'
-                    : 'text-slate-500 dark:text-slate-400'
-                }`}
-              >
-                {t.allSlotsTab}
-              </button>
-              <button
-                type="button"
-                onClick={() => setMobileBatchView('first10')}
-                className={`min-h-[40px] py-2 px-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition truncate cursor-pointer ${
-                  mobileBatchView === 'first10'
-                    ? 'bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950'
-                    : 'text-slate-500 dark:text-slate-400'
-                }`}
-              >
-                {t.first10Tab} ({first10FilledCount}/10)
-              </button>
-              <button
-                type="button"
-                onClick={() => setMobileBatchView('next10')}
-                className={`min-h-[40px] py-2 px-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition truncate cursor-pointer ${
-                  mobileBatchView === 'next10'
-                    ? 'bg-[#f1c40f] text-slate-950'
-                    : 'text-slate-500 dark:text-slate-400'
-                }`}
-              >
-                {t.next10Tab} ({next10FilledCount}/10)
-              </button>
-            </div>
-
-            {/* TWO ORGANIZED 10-PLAYER LISTS: FIRST 10 (PLAYING) & NEXT 10 (WAITING) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 items-start">
-              {/* FIRST 10 PLAYERS (SLOTS 1–10) */}
-              {(mobileBatchView === 'both' ||
-                mobileBatchView === 'first10') && (
-                <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-cyan-500/40 dark:border-[#00f2fe]/35 space-y-3.5 sm:space-y-4 shadow-xs overflow-hidden">
-                  <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
-                    <div className="min-w-0">
-                      <span className="block text-[11px] sm:text-xs font-mono text-cyan-700 dark:text-[#00f2fe] font-bold truncate">
-                        {t.game1Badge}
+            {/* =====================================================================
+                DYNAMIC GAME / SET SELECTOR (DEFAULT: GAME 1 / 1-10, CHOICES UP TO GAME 5 / 50 SLOTS)
+               ===================================================================== */}
+            <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-slate-200 dark:border-slate-800 space-y-3.5 shadow-xs overflow-hidden">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse"></span>
+                    <h2 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-cyan-600 dark:text-[#00f2fe]" />
+                      <span>
+                        {language === 'tl'
+                          ? 'Mga Sets / Games na Lalaruin'
+                          : 'Active Sets / Games to Play'}
                       </span>
-                      <h2 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white truncate">
-                        {t.first10Title}
-                      </h2>
-                    </div>
-                    <span className="font-mono tabular-nums text-xs font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
-                      {first10FilledCount}/10
+                    </h2>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {language === 'tl'
+                      ? 'Default ay Game 1 (1–10 slots). Piliin kung ilang sets ang lalaro (hanggang Game 5 / 50 slots kapag marami ang participants).'
+                      : 'Default is Game 1 (1–10 slots). Choose how many sets to play (up to Game 5 / 50 slots for large groups).'}
+                  </p>
+                </div>
+
+                {/* Total Filled Stats */}
+                <div className="flex items-center gap-2 text-xs font-mono shrink-0">
+                  <span className="px-3 py-1 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold">
+                    Total Active Slots:{' '}
+                    <span className="text-cyan-700 dark:text-[#00f2fe]">
+                      {slots.slice(0, activeSetCount * 10).filter(Boolean).length}
                     </span>
-                  </div>
+                    /{activeSetCount * 10}
+                  </span>
+                </div>
+              </div>
 
-                  <div className="space-y-2">
-                    <div className="text-[11px] font-mono text-cyan-700 dark:text-[#00f2fe] font-semibold px-1">
-                      {t.slotTeamBlueHint}
-                    </div>
-                    {Array.from({ length: 5 }, (_, i) =>
-                      renderSlotRow(i, true)
-                    )}
-                    <div className="pt-1.5 text-[11px] font-mono text-rose-600 dark:text-rose-400 font-semibold px-1">
-                      {t.slotTeamRedHint}
-                    </div>
-                    {Array.from({ length: 5 }, (_, i) =>
-                      renderSlotRow(i + 5, true)
-                    )}
-                  </div>
+              {/* Set Choices (1 Game, 2 Games, 3 Games, 4 Games, 5 Games) */}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 shrink-0">
+                  {language === 'tl' ? 'Pumili ng Set:' : 'Select Sets:'}
+                </span>
 
-                  {/* Series Format Selector (1 Game / Best of 3 / Best of 5) */}
-                  <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
-                        {t.seriesFormatLabel}
-                      </span>
-                      <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 w-full sm:w-auto">
-                        {(
-                          [
-                            { id: 'BO1', label: t.formatBo1 },
-                            { id: 'BO3', label: t.formatBo3 },
-                            { id: 'BO5', label: t.formatBo5 },
-                          ] as const
-                        ).map((fmt) => (
-                          <button
-                            key={fmt.id}
-                            type="button"
-                            onClick={() => handleSetSeriesFormat(fmt.id)}
-                            className={`min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-bold transition truncate cursor-pointer ${
-                              liveMatch.seriesFormat === fmt.id
-                                ? 'bg-[#f1c40f] text-slate-950'
-                                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
-                          >
-                            {fmt.label}
-                          </button>
-                        ))}
+                <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-1.5 w-full sm:w-auto">
+                  {[
+                    { count: 1, label: 'Game 1 (10 Slots)', short: '1 Game (10)' },
+                    { count: 2, label: 'Game 2 (20 Slots)', short: '2 Games (20)' },
+                    { count: 3, label: 'Game 3 (30 Slots)', short: '3 Games (30)' },
+                    { count: 4, label: 'Game 4 (40 Slots)', short: '4 Games (40)' },
+                    { count: 5, label: 'Game 5 (50 Slots)', short: '5 Games (50)' },
+                  ].map((opt) => {
+                    const isActive = activeSetCount === opt.count;
+                    return (
+                      <button
+                        key={opt.count}
+                        type="button"
+                        onClick={() => {
+                          setActiveSetCount(opt.count);
+                          if (activeSetTab !== 'all' && Number(activeSetTab) > opt.count) {
+                            setActiveSetTab('all');
+                          }
+                          triggerToast(
+                            language === 'tl'
+                              ? `Itinakda sa ${opt.count} Set (${opt.count * 10} slots).`
+                              : `Set to ${opt.count} Game Sets (${opt.count * 10} slots).`
+                          );
+                        }}
+                        className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                          isActive
+                            ? 'bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 shadow-sm ring-2 ring-cyan-500/30'
+                            : 'bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-cyan-500/50'
+                        }`}
+                      >
+                        <span>{opt.label}</span>
+                        {opt.count === 1 && (
+                          <span className="px-1.5 py-0.2 rounded bg-black/15 text-[10px] uppercase font-mono">
+                            Default
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Quick Add / Remove buttons */}
+                <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                  {activeSetCount > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = Math.max(1, activeSetCount - 1);
+                        setActiveSetCount(next);
+                        if (activeSetTab !== 'all' && Number(activeSetTab) > next) {
+                          setActiveSetTab('all');
+                        }
+                      }}
+                      className="min-h-[36px] px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1 cursor-pointer"
+                      title="Bawasan ng 1 Game"
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Bawasan</span>
+                    </button>
+                  )}
+                  {activeSetCount < 5 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = Math.min(5, activeSetCount + 1);
+                        setActiveSetCount(next);
+                        triggerToast(
+                          language === 'tl'
+                            ? `Idinagdag ang Game ${next} (Slots ${(next - 1) * 10 + 1}–${next * 10})!`
+                            : `Added Game ${next} (Slots ${(next - 1) * 10 + 1}–${next * 10})!`
+                        );
+                      }}
+                      className="min-h-[36px] px-3 py-1 rounded-xl bg-[#f1c40f] hover:bg-yellow-300 text-slate-950 text-xs font-bold flex items-center gap-1 cursor-pointer shadow-xs"
+                      title="Magdagdag ng karagdagang 10 slots"
+                    >
+                      <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                      <span>+ Dagdag Game {activeSetCount + 1}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Game View Tabs when multiple games active */}
+              {activeSetCount > 1 && (
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mr-1">
+                    {language === 'tl' ? 'Tingnan:' : 'View:'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSetTab('all')}
+                    className={`min-h-[32px] px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      activeSetTab === 'all'
+                        ? 'bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {language === 'tl'
+                      ? `Lahat ng Laro (${activeSetCount} Games)`
+                      : `All Games (${activeSetCount})`}
+                  </button>
+
+                  {Array.from({ length: activeSetCount }, (_, i) => {
+                    const setNum = i + 1;
+                    const isTabActive = activeSetTab === setNum;
+                    const filled = getSetFilledCount(i);
+                    return (
+                      <button
+                        key={setNum}
+                        type="button"
+                        onClick={() => setActiveSetTab(setNum)}
+                        className={`min-h-[32px] px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                          isTabActive
+                            ? setNum === 1
+                              ? 'bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950'
+                              : 'bg-amber-500 dark:bg-[#f1c40f] text-slate-950'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                      >
+                        <span>Game {setNum}</span>
+                        <span className="text-[10px] font-mono opacity-80">
+                          ({filled}/10)
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            {/* DYNAMIC RENDERING OF GAME SETS (1 to 5 Games) */}
+            <div
+              className={`grid grid-cols-1 ${
+                (activeSetTab === 'all' ? activeSetCount : 1) > 1
+                  ? 'lg:grid-cols-2'
+                  : 'max-w-3xl mx-auto'
+              } gap-4 sm:gap-6 items-start`}
+            >
+              {(activeSetTab === 'all'
+                ? Array.from({ length: activeSetCount }, (_, i) => i)
+                : [Number(activeSetTab) - 1].filter((idx) => idx >= 0 && idx < activeSetCount)
+              ).map((setIdx) => {
+                const setNum = setIdx + 1;
+                const startSlot = setIdx * 10 + 1;
+                const midSlot = setIdx * 10 + 5;
+                const endSlot = setIdx * 10 + 10;
+                const filledCount = getSetFilledCount(setIdx);
+                const isGame1 = setIdx === 0;
+
+                // Color accents per game
+                const borderClass = isGame1
+                  ? 'border-cyan-500/40 dark:border-[#00f2fe]/35'
+                  : setNum === 2
+                    ? 'border-amber-500/45 dark:border-[#f1c40f]/35'
+                    : setNum === 3
+                      ? 'border-emerald-500/45 dark:border-emerald-400/35'
+                      : setNum === 4
+                        ? 'border-purple-500/45 dark:border-purple-400/35'
+                        : 'border-rose-500/45 dark:border-rose-400/35';
+
+                const badgeBg = isGame1
+                  ? 'bg-cyan-500/15 text-cyan-700 dark:text-[#00f2fe]'
+                  : setNum === 2
+                    ? 'bg-amber-500/15 text-amber-700 dark:text-[#f1c40f]'
+                    : setNum === 3
+                      ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                      : setNum === 4
+                        ? 'bg-purple-500/15 text-purple-700 dark:text-purple-300'
+                        : 'bg-rose-500/15 text-rose-700 dark:text-rose-400';
+
+                return (
+                  <section
+                    key={`game-set-${setNum}`}
+                    className={`p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border ${borderClass} space-y-3.5 sm:space-y-4 shadow-xs overflow-hidden`}
+                  >
+                    {/* Game Header */}
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+                      <div className="min-w-0">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-[11px] font-mono font-bold uppercase truncate ${badgeBg}`}
+                        >
+                          {isGame1
+                            ? '🔥 GAME 1 · PLAYING NOW'
+                            : `⚡ GAME ${setNum} · WAITING IN LINE`}
+                        </span>
+                        <h2 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white truncate mt-0.5">
+                          Game {setNum} (Slots {startSlot}–{endSlot})
+                        </h2>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="font-mono tabular-nums text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                          {filledCount}/10
+                        </span>
+                        <p className="text-[10px] text-slate-500">Ready</p>
                       </div>
                     </div>
 
-                    {/* Choice 1: Start Match Without Shuffling (1-5 vs 6-10) OR Choice 2: Shuffle 5v5 Teams */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleStartDirectLineup5v5('batch1', true)
-                        }
-                        className="w-full min-w-0 min-h-[44px] px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-xs sm:text-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <Play className="w-4 h-4 fill-current shrink-0" />
-                        <span className="truncate">{t.startNoShuffleBtn}</span>
-                      </button>
+                    {/* 10 Player Slots (5 Blue, 5 Red) */}
+                    <div className="space-y-2">
+                      <div className="text-[11px] font-mono text-cyan-700 dark:text-[#00f2fe] font-semibold px-1 flex items-center justify-between">
+                        <span>🔵 Team Blue (Slots {startSlot}–{midSlot})</span>
+                        <span className="text-[10px] text-slate-400">1–5</span>
+                      </div>
+                      {Array.from({ length: 5 }, (_, i) =>
+                        renderSlotRow(setIdx * 10 + i, isGame1)
+                      )}
 
-                      <button
-                        type="button"
-                        onClick={() => handleShuffle5v5('batch1', true, true)}
-                        className="w-full min-w-0 min-h-[44px] px-3 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs sm:text-sm hover:opacity-90 transition flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <Shuffle className="w-4 h-4 stroke-[2.5] shrink-0" />
-                        <span className="truncate">{t.shuffleFirst10Btn}</span>
-                      </button>
+                      <div className="pt-2 text-[11px] font-mono text-rose-600 dark:text-rose-400 font-semibold px-1 flex items-center justify-between">
+                        <span>🔴 Team Red (Slots {midSlot + 1}–{endSlot})</span>
+                        <span className="text-[10px] text-slate-400">6–10</span>
+                      </div>
+                      {Array.from({ length: 5 }, (_, i) =>
+                        renderSlotRow(setIdx * 10 + i + 5, isGame1)
+                      )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleCopyGcText('warmup')}
-                      className="w-full min-h-[40px] px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-cyan-600 dark:hover:border-[#00f2fe] flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Copy className="w-3.5 h-3.5 shrink-0" />
-                      <span className="truncate">{t.copyGcList}</span>
-                    </button>
-                  </div>
-                </section>
-              )}
+                    {/* Action Buttons for this Game Set */}
+                    <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
+                      {/* Game 1 Specific: Series Format Selector */}
+                      {isGame1 && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+                          <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
+                            {t.seriesFormatLabel}
+                          </span>
+                          <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 w-full sm:w-auto">
+                            {(
+                              [
+                                { id: 'BO1', label: t.formatBo1 },
+                                { id: 'BO3', label: t.formatBo3 },
+                                { id: 'BO5', label: t.formatBo5 },
+                              ] as const
+                            ).map((fmt) => (
+                              <button
+                                key={fmt.id}
+                                type="button"
+                                onClick={() => handleSetSeriesFormat(fmt.id)}
+                                className={`min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-bold transition truncate cursor-pointer ${
+                                  liveMatch.seriesFormat === fmt.id
+                                    ? 'bg-[#f1c40f] text-slate-950'
+                                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
+                              >
+                                {fmt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-              {/* NEXT 10 PLAYERS (SLOTS 11–20) */}
-              {(mobileBatchView === 'both' || mobileBatchView === 'next10') && (
-                <section className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-slate-900/85 border border-amber-500/45 dark:border-[#f1c40f]/35 space-y-3.5 sm:space-y-4 shadow-xs overflow-hidden">
-                  <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
-                    <div className="min-w-0">
-                      <span className="block text-[11px] sm:text-xs font-mono text-amber-700 dark:text-[#f1c40f] font-bold truncate">
-                        {t.game2Badge}
-                      </span>
-                      <h2 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white truncate">
-                        {t.next10Title}
-                      </h2>
+                      {/* Lineup Buttons */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleStartDirectLineup5v5(setNum, true)}
+                          className="w-full min-w-0 min-h-[42px] px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-xs sm:text-sm transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Play className="w-4 h-4 fill-current shrink-0" />
+                          <span className="truncate">
+                            {isGame1 ? t.startNoShuffleBtn : `Laruin Game ${setNum} (No Shuffle)`}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleShuffle5v5(setNum, true, true)}
+                          className="w-full min-w-0 min-h-[42px] px-3 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs sm:text-sm hover:opacity-90 transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Shuffle className="w-4 h-4 stroke-[2.5] shrink-0" />
+                          <span className="truncate">
+                            {isGame1 ? t.shuffleFirst10Btn : `I-shuffle Game ${setNum}`}
+                          </span>
+                        </button>
+                      </div>
+
+                      {/* Copy GC text & Set management */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCopySingleGameSet(setIdx)}
+                          className="w-full min-h-[38px] px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-cyan-600 dark:hover:border-[#00f2fe] flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Copy className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">Kopyahin Game {setNum}</span>
+                        </button>
+
+                        {!isGame1 ? (
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handlePromoteSetToGame1(setIdx)}
+                              className="min-h-[38px] px-2 py-1.5 rounded-xl bg-[#f1c40f] text-slate-950 font-display font-bold text-xs hover:bg-yellow-300 transition flex items-center justify-center gap-1 cursor-pointer truncate"
+                              title="I-promote itong Game bilang Game 1"
+                            >
+                              <ArrowUpRight className="w-3.5 h-3.5 shrink-0" />
+                              <span className="truncate">Promote</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleClearSingleSet(setIdx)}
+                              className="min-h-[38px] px-2 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-rose-600 dark:text-rose-400 hover:text-white text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer truncate"
+                              title="Burahin ang mga player sa game na ito"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                              <span className="truncate">Clear</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleCopyGcText('warmup')}
+                            className="w-full min-h-[38px] px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-cyan-600 dark:hover:border-[#00f2fe] flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-cyan-600 dark:text-[#00f2fe] shrink-0" />
+                            <span className="truncate">Kopyahin Lahat ng Sets</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <span className="font-mono tabular-nums text-xs font-bold text-amber-700 dark:text-[#f1c40f] shrink-0">
-                      {next10FilledCount}/10
-                    </span>
-                  </div>
+                  </section>
+                );
+              })}
 
-                  <div className="space-y-2">
-                    {Array.from({ length: 10 }, (_, i) =>
-                      renderSlotRow(i + 10, false)
-                    )}
+              {/* Add Next Game Card Prompt */}
+              {activeSetCount < 5 && activeSetTab === 'all' && (
+                <div
+                  onClick={() => {
+                    const next = activeSetCount + 1;
+                    setActiveSetCount(next);
+                    triggerToast(
+                      language === 'tl'
+                        ? `Idinagdag ang Game ${next} (Slots ${(next - 1) * 10 + 1}–${next * 10})!`
+                        : `Added Game ${next} (Slots ${(next - 1) * 10 + 1}–${next * 10})!`
+                    );
+                  }}
+                  className="p-6 rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-800 hover:border-cyan-500 dark:hover:border-[#00f2fe] bg-slate-50/50 dark:bg-slate-900/30 flex flex-col items-center justify-center text-center gap-3 transition cursor-pointer min-h-[300px]"
+                >
+                  <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 text-cyan-700 dark:text-[#00f2fe] flex items-center justify-center font-bold">
+                    <Plus className="w-6 h-6 stroke-[2.5]" />
                   </div>
-
-                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handlePromoteNext10ToFirst10}
-                      className="w-full min-w-0 min-h-[44px] px-3 sm:px-4 py-2 rounded-xl bg-[#f1c40f] text-slate-950 font-display font-bold text-xs sm:text-sm hover:bg-yellow-300 transition flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <ArrowUpRight className="w-4 h-4 stroke-[2.5] shrink-0" />
-                      <span className="truncate">{t.promoteNext10Btn}</span>
-                    </button>
+                  <div>
+                    <h3 className="text-sm sm:text-base font-display font-bold text-slate-900 dark:text-white">
+                      Magdagdag ng Game {activeSetCount + 1}
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs">
+                      May karagdagang participants na sasali? I-click para magbukas ng Slots{' '}
+                      {activeSetCount * 10 + 1}–{(activeSetCount + 1) * 10}.
+                    </p>
                   </div>
-                </section>
+                  <span className="px-4 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold text-xs shadow-xs">
+                    + Buksan ang Game {activeSetCount + 1}
+                  </span>
+                </div>
               )}
             </div>
           </div>
@@ -3113,123 +3517,27 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Optional Player Detailed Stats Editor (KDA, Damage, Gold) */}
+              {/* Detailed Player Stats Editor (Fast KDA Pickers + Typed Hero Damage & Gold) */}
               {showManualStatsEditor && (
-                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
-                    <span>Manual Player Performance (Opsyonal)</span>
-                    <span className="text-[11px] text-slate-500 font-normal">Maaaring mag-enter ng KDA (e.g. 10/2/8), Damage, o Gold</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    {/* Team Blue Players Stats */}
-                    <div className="space-y-1.5">
-                      <div className="text-xs font-bold text-cyan-600 dark:text-[#00f2fe] flex items-center gap-1">
-                        <span>🔵 Team Blue Players</span>
-                      </div>
-                      {liveMatch.teamBlue.map((p, idx) => (
-                        <div key={`blue-stat-${idx}`} className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-bold min-w-[70px] truncate">{p.ign}</span>
-                          <input
-                            type="text"
-                            placeholder="KDA (e.g. 8/2/11)"
-                            value={p.kda || ''}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setLiveMatch((prev) => {
-                                const tb = [...prev.teamBlue];
-                                tb[idx] = { ...tb[idx], kda: val };
-                                return { ...prev, teamBlue: tb };
-                              });
-                            }}
-                            className="w-24 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Hero Dmg"
-                            value={p.heroDamage ? String(p.heroDamage) : ''}
-                            onChange={(e) => {
-                              const num = parseInt(e.target.value.replace(/,/g, ''), 10) || 0;
-                              setLiveMatch((prev) => {
-                                const tb = [...prev.teamBlue];
-                                tb[idx] = { ...tb[idx], heroDamage: num };
-                                return { ...prev, teamBlue: tb };
-                              });
-                            }}
-                            className="w-20 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Gold"
-                            value={p.gold ? String(p.gold) : ''}
-                            onChange={(e) => {
-                              const num = parseInt(e.target.value.replace(/,/g, ''), 10) || 0;
-                              setLiveMatch((prev) => {
-                                const tb = [...prev.teamBlue];
-                                tb[idx] = { ...tb[idx], gold: num };
-                                return { ...prev, teamBlue: tb };
-                              });
-                            }}
-                            className="w-18 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
-                          />
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Team Red Players Stats */}
-                    <div className="space-y-1.5">
-                      <div className="text-xs font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1">
-                        <span>🔴 Team Red Players</span>
-                      </div>
-                      {liveMatch.teamRed.map((p, idx) => (
-                        <div key={`red-stat-${idx}`} className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-bold min-w-[70px] truncate">{p.ign}</span>
-                          <input
-                            type="text"
-                            placeholder="KDA (e.g. 5/4/6)"
-                            value={p.kda || ''}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setLiveMatch((prev) => {
-                                const tr = [...prev.teamRed];
-                                tr[idx] = { ...tr[idx], kda: val };
-                                return { ...prev, teamRed: tr };
-                              });
-                            }}
-                            className="w-24 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Hero Dmg"
-                            value={p.heroDamage ? String(p.heroDamage) : ''}
-                            onChange={(e) => {
-                              const num = parseInt(e.target.value.replace(/,/g, ''), 10) || 0;
-                              setLiveMatch((prev) => {
-                                const tr = [...prev.teamRed];
-                                tr[idx] = { ...tr[idx], heroDamage: num };
-                                return { ...prev, teamRed: tr };
-                              });
-                            }}
-                            className="w-20 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Gold"
-                            value={p.gold ? String(p.gold) : ''}
-                            onChange={(e) => {
-                              const num = parseInt(e.target.value.replace(/,/g, ''), 10) || 0;
-                              setLiveMatch((prev) => {
-                                const tr = [...prev.teamRed];
-                                tr[idx] = { ...tr[idx], gold: num };
-                                return { ...prev, teamRed: tr };
-                              });
-                            }}
-                            className="w-18 px-2 py-1 rounded bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 font-mono text-[11px]"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                <div className="p-3.5 sm:p-4 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800">
+                  <ManualStatsEditor
+                    teamBlue={liveMatch.teamBlue}
+                    teamRed={liveMatch.teamRed}
+                    onUpdateBluePlayer={(idx, updated) => {
+                      setLiveMatch((prev) => {
+                        const tb = [...prev.teamBlue];
+                        tb[idx] = { ...tb[idx], ...updated };
+                        return { ...prev, teamBlue: tb };
+                      });
+                    }}
+                    onUpdateRedPlayer={(idx, updated) => {
+                      setLiveMatch((prev) => {
+                        const tr = [...prev.teamRed];
+                        tr[idx] = { ...tr[idx], ...updated };
+                        return { ...prev, teamRed: tr };
+                      });
+                    }}
+                  />
                 </div>
               )}
 
@@ -3403,6 +3711,24 @@ export default function App() {
                           </div>
 
                           <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Input / Edit Match Stats Button (Admin feature) */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditMatchStats(record)}
+                              className="min-h-[34px] px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-700 dark:text-[#00f2fe] border border-cyan-500/30 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                              title={
+                                isAdmin
+                                  ? 'Mag-input o mag-edit ng stats (KDA, Hero Damage, Gold)'
+                                  : 'Admin Only: Mag-input o mag-edit ng match stats'
+                              }
+                            >
+                              <Edit3 className="w-3.5 h-3.5 shrink-0" />
+                              <span>Input / Edit Stats</span>
+                              {!isAdmin && (
+                                <Lock className="w-3 h-3 text-slate-400 shrink-0 ml-0.5" />
+                              )}
+                            </button>
+
                             <button
                               type="button"
                               onClick={() => handleCopyBattleResult(record)}
@@ -3479,7 +3805,11 @@ export default function App() {
             TAB: GAME STATS & LOGS (ADVANCE OCR STATS & POSTER GENERATOR)
            ===================================================================== */}
         {activeTab === 'stats' && (
-          <GameStatsTab matchHistory={matchHistory} />
+          <GameStatsTab
+            matchHistory={matchHistory}
+            onEditMatchStats={handleOpenEditMatchStats}
+            isAdmin={isAdmin}
+          />
         )}
 
         {/* =====================================================================

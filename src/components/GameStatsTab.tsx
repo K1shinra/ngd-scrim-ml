@@ -21,6 +21,8 @@ import {
   ExternalLink,
   X,
   Upload,
+  Lock,
+  Edit3,
 } from 'lucide-react';
 import {
   MatchHistoryRecord,
@@ -32,11 +34,15 @@ import { MatchPosterModal, PosterTemplate } from './MatchPosterModal';
 interface GameStatsTabProps {
   matchHistory: MatchHistoryRecord[];
   onUploadScreenshotForMatch?: (matchId: string, file: File) => void;
+  onEditMatchStats?: (match: MatchHistoryRecord) => void;
+  isAdmin?: boolean;
 }
 
 export const GameStatsTab: React.FC<GameStatsTabProps> = ({
   matchHistory,
   onUploadScreenshotForMatch,
+  onEditMatchStats,
+  isAdmin = false,
 }) => {
   const [selectedMatchForPoster, setSelectedMatchForPoster] =
     useState<MatchHistoryRecord | null>(null);
@@ -354,6 +360,21 @@ Powered by NGD Queue Master`;
                       <span className="hidden sm:inline">View Screenshot</span>
                       <span className="sm:hidden">Photo</span>
                     </button>
+
+                    {/* Edit Match Stats button (Admin feature) */}
+                    {onEditMatchStats && (
+                      <button
+                        type="button"
+                        onClick={() => onEditMatchStats(match)}
+                        className="px-3 py-2 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                        title={isAdmin ? 'Edit / Input missing player stats' : 'Admin Only: Edit match stats'}
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Edit Stats</span>
+                        <span className="sm:hidden">Edit</span>
+                        {!isAdmin && <Lock className="w-3 h-3 text-slate-400 ml-0.5" />}
+                      </button>
+                    )}
 
                     {/* Copy GC text */}
                     <button
