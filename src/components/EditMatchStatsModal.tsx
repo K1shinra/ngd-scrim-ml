@@ -20,12 +20,14 @@ import {
   formatKdaValues,
   calculateKdaRatio,
 } from './ManualStatsEditor';
+import { calculateMlbbRating } from '../utils/scrimEngine';
 
 interface EditMatchStatsModalProps {
   match: MatchHistoryRecord | null;
   isOpen: boolean;
   onClose: () => void;
   onSave: (updated: MatchHistoryRecord) => void;
+  language?: 'en' | 'tl';
 }
 
 export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
@@ -33,6 +35,7 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
   isOpen,
   onClose,
   onSave,
+  language = 'en',
 }) => {
   if (!isOpen || !match) return null;
 
@@ -94,6 +97,41 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
     });
   };
 
+  const handleAutoCalculateAllRatings = () => {
+    setTeamBlue((prev) =>
+      prev.map((p) => {
+        const isWinner = winner === 'Blue';
+        const isMvp = isWinner && p.ign.toLowerCase() === mvpIgn.trim().toLowerCase();
+        const isSvp = !isWinner && p.ign.toLowerCase() === (svpIgn?.trim() || '').toLowerCase();
+        const res = calculateMlbbRating(p.kda, isWinner, isMvp, isSvp);
+        return {
+          ...p,
+          won: isWinner,
+          isMvp,
+          rating: res.rating,
+          medal: res.medal,
+          isFeeder: res.isFeeder,
+        };
+      })
+    );
+    setTeamRed((prev) =>
+      prev.map((p) => {
+        const isWinner = winner === 'Red';
+        const isMvp = isWinner && p.ign.toLowerCase() === mvpIgn.trim().toLowerCase();
+        const isSvp = !isWinner && p.ign.toLowerCase() === (svpIgn?.trim() || '').toLowerCase();
+        const res = calculateMlbbRating(p.kda, isWinner, isMvp, isSvp);
+        return {
+          ...p,
+          won: isWinner,
+          isMvp,
+          rating: res.rating,
+          medal: res.medal,
+          isFeeder: res.isFeeder,
+        };
+      })
+    );
+  };
+
   const handleSetPlayerKda = (
     team: 'Blue' | 'Red',
     index: number,
@@ -135,6 +173,48 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
       }`;
     }
 
+    // Synchronize won flag and MLBB medals across both teams
+    const updatedBlue = teamBlue.map((p) => {
+      const isWinner = winner === 'Blue';
+      const isMvp = isWinner && p.ign.toLowerCase() === mvpIgn.trim().toLowerCase();
+      const isSvp = !isWinner && p.ign.toLowerCase() === (svpIgn?.trim() || '').toLowerCase();
+      const grading = calculateMlbbRating(p.kda, isWinner, isMvp, isSvp);
+      const medal = isMvp ? 'MVP' : isSvp ? 'SVP' : (p.medal || grading.medal);
+      const rating = p.rating || grading.rating;
+      const isFeeder = medal === 'Bronze' || p.isFeeder || grading.isFeeder;
+      return {
+        ...p,
+        won: isWinner,
+        isMvp,
+        rating,
+        medal,
+        isFeeder,
+      };
+    });
+
+    const updatedRed = teamRed.map((p) => {
+      const isWinner = winner === 'Red';
+      const isMvp = isWinner && p.ign.toLowerCase() === mvpIgn.trim().toLowerCase();
+      const isSvp = !isWinner && p.ign.toLowerCase() === (svpIgn?.trim() || '').toLowerCase();
+      const grading = calculateMlbbRating(p.kda, isWinner, isMvp, isSvp);
+      const medal = isMvp ? 'MVP' : isSvp ? 'SVP' : (p.medal || grading.medal);
+      const rating = p.rating || grading.rating;
+      const isFeeder = medal === 'Bronze' || p.isFeeder || grading.isFeeder;
+      return {
+        ...p,
+        won: isWinner,
+        isMvp,
+        rating,
+        medal,
+        isFeeder,
+      };
+    });
+
+    const bronzePlayers = [...updatedBlue, ...updatedRed].filter(
+      (p) => p.medal === 'Bronze' || p.isFeeder
+    );
+    const bronzeIgns = bronzePlayers.map((p) => p.ign);
+
     const updated: MatchHistoryRecord = {
       ...match,
       roomName,
@@ -145,9 +225,10 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
       killScore: formattedScore,
       mvpIgn: mvpIgn.trim() || match.mvpIgn,
       svpIgn: svpIgn.trim() || undefined,
-      feederIgn: feederIgn.trim() || undefined,
-      teamBlue,
-      teamRed,
+      feederIgn: feederIgn.trim() || bronzeIgns[0] || undefined,
+      feederIgns: bronzeIgns.length > 0 ? bronzeIgns : undefined,
+      teamBlue: updatedBlue,
+      teamRed: updatedRed,
     };
 
     onSave(updated);
@@ -306,7 +387,9 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                   onChange={(e) => setSvpIgn(e.target.value)}
                   className="w-full h-9 px-2.5 rounded-lg bg-white dark:bg-[#0b0f19] border border-purple-500/40 text-xs font-semibold text-purple-800 dark:text-purple-300 focus:outline-none focus:border-purple-400"
                 >
-                  <option value="">-- Pumili ng SVP (Opsyonal) --</option>
+                  <option value="">
+                    {language === 'tl' ? '-- Pumili ng SVP (Opsyonal) --' : '-- Select Defeat SVP (Optional) --'}
+                  </option>
                   {allPlayers.map((p, idx) => (
                     <option key={`${p.ign}-${idx}`} value={p.ign}>
                       {p.ign} ({p.selectedRole})
@@ -318,7 +401,7 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
               <div>
                 <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1 flex items-center gap-1">
                   <Skull className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Tanso / Feeder (Opsyonal)</span>
+                  <span>{language === 'tl' ? 'Tanso / Feeder (Opsyonal)' : 'Bronze / Feeder (Optional)'}</span>
                 </label>
                 <select
                   value={feederIgn}
@@ -336,8 +419,27 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
             </div>
           </div>
 
-          {/* Section 2: Player Stats Inputs (KDA Pickers + Typed Damage & Gold) */}
+          {/* Section 2: Player Stats Inputs (KDA Pickers + Typed Damage & Gold + ML Medals) */}
           <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              <div className="text-xs text-slate-700 dark:text-slate-300">
+                <span className="font-bold text-cyan-600 dark:text-[#00f2fe]">
+                  {language === 'tl' ? 'MLBB Grading & Tanso System:' : 'MLBB Grading & Bronze System:'}
+                </span>{' '}
+                {language === 'tl'
+                  ? 'Bawat player ay may sariling Medal (MVP, SVP, Gold, Silver, Bronze/Tanso). Pwedeng 1 hanggang 5 ang tanso kapag mababa ang laro!'
+                  : 'Each player has their own Medal (MVP, SVP, Gold, Silver, Bronze). Multiple players can receive Bronze if match rating is low!'}
+              </div>
+              <button
+                type="button"
+                onClick={handleAutoCalculateAllRatings}
+                className="px-3 py-1.5 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 hover:opacity-90 transition shrink-0 cursor-pointer shadow-xs"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{language === 'tl' ? 'Auto-Grade Lahat (ML Medals)' : 'Auto-Grade All (ML Medals)'}</span>
+              </button>
+            </div>
+
             {/* Team Blue */}
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs font-bold text-cyan-700 dark:text-[#00f2fe] px-1">
@@ -346,7 +448,9 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                   <span>TEAM BLUE PLAYERS (5)</span>
                 </span>
                 <span className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
-                  Piliin ang KDA numbers · I-type ang Hero Damage at Gold
+                  {language === 'tl'
+                    ? 'Piliin ang KDA numbers · ML Medal & Score · I-type ang Hero Damage at Gold'
+                    : 'Select KDA numbers · ML Medal & Rating · Enter Hero Damage & Gold'}
                 </span>
               </div>
 
@@ -357,10 +461,10 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                   return (
                     <div
                       key={`blue-${p.ign}-${i}`}
-                      className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-blue-500/30 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                      className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-blue-500/30 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs"
                     >
                       {/* Player Info */}
-                      <div className="w-full md:w-44 shrink-0">
+                      <div className="w-full lg:w-40 shrink-0">
                         <div className="font-display font-bold text-slate-900 dark:text-white truncate">
                           {p.ign}
                         </div>
@@ -370,7 +474,7 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                       </div>
 
                       {/* Fast KDA Pickers (K / D / A) */}
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {/* Kills */}
                         <div className="flex items-center rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-1">
                           <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 px-1">
@@ -478,9 +582,49 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                         </span>
                       </div>
 
+                      {/* MLBB Medal & Rating Input */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <select
+                          value={p.medal || (p.isMvp ? 'MVP' : 'Silver')}
+                          onChange={(e) => {
+                            const m = e.target.value;
+                            updateBluePlayer(i, {
+                              medal: m,
+                              isFeeder: m === 'Bronze',
+                            });
+                          }}
+                          className={`h-8 px-2 rounded-lg font-bold text-[11px] border focus:outline-none cursor-pointer ${
+                            p.medal === 'MVP'
+                              ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/40'
+                              : p.medal === 'SVP'
+                                ? 'bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/40'
+                                : p.medal === 'Gold'
+                                  ? 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-400 border-yellow-500/40'
+                                  : p.medal === 'Bronze' || p.isFeeder
+                                    ? 'bg-amber-900/25 text-amber-600 dark:text-amber-500 border-amber-700/50'
+                                    : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          <option value="MVP">👑 MVP</option>
+                          <option value="SVP">🥈 SVP</option>
+                          <option value="Gold">🥇 Gold</option>
+                          <option value="Silver">🥈 Silver</option>
+                          <option value="Bronze">{language === 'tl' ? '🥉 Bronze (Tanso)' : '🥉 Bronze'}</option>
+                        </select>
+
+                        <input
+                          type="text"
+                          value={p.rating || ''}
+                          onChange={(e) => updateBluePlayer(i, { rating: e.target.value })}
+                          placeholder="Score"
+                          title="MLBB Score / Rating (e.g. 10.5, 7.8, 3.4)"
+                          className="w-14 h-8 px-1 text-center font-mono font-bold text-xs rounded-lg bg-white dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+
                       {/* Hero Damage & Gold (Direct typing input) */}
                       <div className="flex items-center gap-2">
-                        <div className="w-28 relative">
+                        <div className="w-24 relative">
                           <input
                             type="number"
                             min="0"
@@ -496,7 +640,7 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                           />
                         </div>
 
-                        <div className="w-24 relative">
+                        <div className="w-20 relative">
                           <input
                             type="number"
                             min="0"
@@ -512,7 +656,7 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                           />
                         </div>
 
-                        <div className="w-24 relative hidden sm:block">
+                        <div className="w-20 relative hidden sm:block">
                           <input
                             type="number"
                             min="0"
@@ -542,7 +686,9 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                   <span>TEAM RED PLAYERS (5)</span>
                 </span>
                 <span className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
-                  Piliin ang KDA numbers · I-type ang Hero Damage at Gold
+                  {language === 'tl'
+                    ? 'Piliin ang KDA numbers · ML Medal & Score · I-type ang Hero Damage at Gold'
+                    : 'Select KDA numbers · ML Medal & Rating · Enter Hero Damage & Gold'}
                 </span>
               </div>
 
@@ -553,10 +699,10 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                   return (
                     <div
                       key={`red-${p.ign}-${i}`}
-                      className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-rose-500/30 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                      className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-rose-500/30 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs"
                     >
                       {/* Player Info */}
-                      <div className="w-full md:w-44 shrink-0">
+                      <div className="w-full lg:w-40 shrink-0">
                         <div className="font-display font-bold text-slate-900 dark:text-white truncate">
                           {p.ign}
                         </div>
@@ -566,7 +712,7 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                       </div>
 
                       {/* Fast KDA Pickers (K / D / A) */}
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {/* Kills */}
                         <div className="flex items-center rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-1">
                           <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 px-1">
@@ -674,9 +820,49 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                         </span>
                       </div>
 
+                      {/* MLBB Medal & Rating Input */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <select
+                          value={p.medal || (p.isMvp ? 'MVP' : 'Silver')}
+                          onChange={(e) => {
+                            const m = e.target.value;
+                            updateRedPlayer(i, {
+                              medal: m,
+                              isFeeder: m === 'Bronze',
+                            });
+                          }}
+                          className={`h-8 px-2 rounded-lg font-bold text-[11px] border focus:outline-none cursor-pointer ${
+                            p.medal === 'MVP'
+                              ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/40'
+                              : p.medal === 'SVP'
+                                ? 'bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/40'
+                                : p.medal === 'Gold'
+                                  ? 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-400 border-yellow-500/40'
+                                  : p.medal === 'Bronze' || p.isFeeder
+                                    ? 'bg-amber-900/25 text-amber-600 dark:text-amber-500 border-amber-700/50'
+                                    : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          <option value="MVP">👑 MVP</option>
+                          <option value="SVP">🥈 SVP</option>
+                          <option value="Gold">🥇 Gold</option>
+                          <option value="Silver">🥈 Silver</option>
+                          <option value="Bronze">{language === 'tl' ? '🥉 Bronze (Tanso)' : '🥉 Bronze'}</option>
+                        </select>
+
+                        <input
+                          type="text"
+                          value={p.rating || ''}
+                          onChange={(e) => updateRedPlayer(i, { rating: e.target.value })}
+                          placeholder="Score"
+                          title="MLBB Score / Rating (e.g. 10.5, 7.8, 3.4)"
+                          className="w-14 h-8 px-1 text-center font-mono font-bold text-xs rounded-lg bg-white dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-500 focus:outline-none focus:border-rose-500"
+                        />
+                      </div>
+
                       {/* Hero Damage & Gold (Direct typing input) */}
                       <div className="flex items-center gap-2">
-                        <div className="w-28 relative">
+                        <div className="w-24 relative">
                           <input
                             type="number"
                             min="0"
@@ -692,7 +878,7 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                           />
                         </div>
 
-                        <div className="w-24 relative">
+                        <div className="w-20 relative">
                           <input
                             type="number"
                             min="0"
@@ -708,7 +894,7 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                           />
                         </div>
 
-                        <div className="w-24 relative hidden sm:block">
+                        <div className="w-20 relative hidden sm:block">
                           <input
                             type="number"
                             min="0"
@@ -735,7 +921,9 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
         {/* Footer */}
         <div className="p-4 sm:p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/90 flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div className="text-xs text-slate-500 dark:text-slate-400">
-            Ang pag-save ay agad na mag-a-update sa Recent Battle Results at Leaderboard.
+            {language === 'tl'
+              ? 'Ang pag-save ay agad na mag-a-update sa Recent Battle Results at Leaderboard.'
+              : 'Saving will immediately update Recent Battle Results and Leaderboard.'}
           </div>
 
           <div className="flex items-center gap-2">
@@ -744,7 +932,7 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
               onClick={onClose}
               className="min-h-[38px] px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:bg-slate-300 dark:hover:bg-slate-700 transition cursor-pointer"
             >
-              Cancel
+              {language === 'tl' ? 'Kanselahin' : 'Cancel'}
             </button>
             <button
               type="button"
@@ -752,7 +940,7 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
               className="min-h-[38px] px-5 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-display font-bold text-xs sm:text-sm hover:opacity-95 transition flex items-center gap-1.5 shadow-md cursor-pointer"
             >
               <Check className="w-4 h-4 stroke-[2.5]" />
-              <span>Save & Update Stats</span>
+              <span>{language === 'tl' ? 'I-save at I-update ang Stats' : 'Save & Update Stats'}</span>
             </button>
           </div>
         </div>

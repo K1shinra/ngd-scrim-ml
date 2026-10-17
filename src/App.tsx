@@ -22,6 +22,7 @@ import {
   Shield,
   ShieldCheck,
   Shuffle,
+  Skull,
   Sparkles,
   Sun,
   Swords,
@@ -81,6 +82,7 @@ import {
   autoBalance5v5,
   autoBalanceCurrentParticipants,
   buildDirectLineup5v5,
+  calculateMlbbRating,
   cleanPlayerIgn,
   detectSeriesFormatFromText,
   formatBattleResultGcText,
@@ -197,7 +199,7 @@ const TRANSLATIONS = {
     yourRoleInMatch: 'You are playing in this match',
     claimIgnTitle: 'Claim / Link MLBB IGN',
     claimIgnDesc: 'Link your Google/Squad account to your MLBB player profile to unlock 1-click queueing and personal highlights.',
-    quickJoinAsMyIgn: 'Quick Palista as',
+    quickJoinAsMyIgn: 'Quick Join as',
     linkMyIgnBtn: 'Link My IGN',
     teamBlueTitle: '🔵 Team Blue (First Pick)',
     teamRedTitle: '🔴 Team Red (Second Pick)',
@@ -834,6 +836,8 @@ export default function App() {
   } | null>(null);
   const [blueStarIgn, setBlueStarIgn] = useState<string>('');
   const [redStarIgn, setRedStarIgn] = useState<string>('');
+  const [customBlueMvp, setCustomBlueMvp] = useState(false);
+  const [customRedMvp, setCustomRedMvp] = useState(false);
   const [blueKillsInput, setBlueKillsInput] = useState<string>('');
   const [redKillsInput, setRedKillsInput] = useState<string>('');
   const [matchDurationInput, setMatchDurationInput] = useState<string>('');
@@ -841,19 +845,13 @@ export default function App() {
   const [showManualStatsEditor, setShowManualStatsEditor] = useState(false);
 
   useEffect(() => {
-    const blueHasCurrent = liveMatch.teamBlue.some(
-      (p) => p.ign.toLowerCase() === blueStarIgn.toLowerCase()
-    );
-    if (!blueHasCurrent && liveMatch.teamBlue[0]) {
+    if (!blueStarIgn && liveMatch.teamBlue[0]) {
       setBlueStarIgn(liveMatch.teamBlue[0].ign);
     }
-    const redHasCurrent = liveMatch.teamRed.some(
-      (p) => p.ign.toLowerCase() === redStarIgn.toLowerCase()
-    );
-    if (!redHasCurrent && liveMatch.teamRed[0]) {
+    if (!redStarIgn && liveMatch.teamRed[0]) {
       setRedStarIgn(liveMatch.teamRed[0].ign);
     }
-  }, [liveMatch.teamBlue, liveMatch.teamRed, blueStarIgn, redStarIgn]);
+  }, [liveMatch.teamBlue, liveMatch.teamRed]);
 
   // Leaderboard State
   const [leaderboardSort, setLeaderboardSort] =
@@ -936,6 +934,10 @@ export default function App() {
     const openIdx = slots.findIndex((s) => s === null);
     if (openIdx !== -1) {
       const slotNum = openIdx + 1;
+      const neededSets = Math.min(5, Math.ceil(slotNum / 10));
+      if (neededSets > activeSetCount) {
+        setActiveSetCount(neededSets);
+      }
       setSlots((prev) => {
         const next = [...prev];
         next[openIdx] = {
@@ -966,6 +968,11 @@ export default function App() {
           : palistSecondRole;
       const roleLabel = formatRolePairText(palistRole, secRole);
       ensurePlayerInRoster(trimmedIgn, palistRole, secRole);
+
+      const neededSets = Math.min(5, Math.ceil((slotIdx + 1) / 10));
+      if (neededSets > activeSetCount) {
+        setActiveSetCount(neededSets);
+      }
 
       setSlots((prev) => {
         const next = [...prev];
@@ -1260,7 +1267,11 @@ export default function App() {
     const text = lines.join('\n');
     try {
       await navigator.clipboard.writeText(text);
-      triggerToast(`Nakopya ang Game ${setNum} para sa GC!`);
+      triggerToast(
+        language === 'tl'
+          ? `Nakopya ang Game ${setNum} para sa GC!`
+          : `Copied Game ${setNum} for GC!`
+      );
     } catch {
       // fallback
     }
@@ -1400,6 +1411,87 @@ export default function App() {
 
   const handleSaveEditedMatchRecord = (updated: MatchHistoryRecord) => {
     if (!isAdmin) return;
+    const oldRecord = matchHistory.find((m) => m.id === updated.id);
+
+    // If winner or MVP changed, automatically sync squad leaderboard stats
+    if (oldRecord) {
+      const winnerChanged = oldRecord.winner !== updated.winner;
+      const mvpChanged =
+        (oldRecord.mvpIgn || '').toLowerCase() !== (updated.mvpIgn || '').toLowerCase();
+
+      if (winnerChanged || mvpChanged) {
+        setPlayers((prevPlayers) => {
+          let updatedPlayers = [...prevPlayers];
+
+          if (winnerChanged) {
+            const oldWinningRoster =
+              oldRecord.winner === 'Blue' ? oldRecord.teamBlue : oldRecord.teamRed;
+            const newWinningRoster =
+              updated.winner === 'Blue' ? updated.teamBlue : updated.teamRed;
+
+            // Revert 1 win from old winners
+            for (const p of oldWinningRoster) {
+              const idx = updatedPlayers.findIndex(
+                (pl) => pl.ign.toLowerCase() === p.ign.toLowerCase()
+              );
+              if (idx !== -1) {
+                updatedPlayers[idx] = {
+                  ...updatedPlayers[idx],
+                  wins: Math.max(0, updatedPlayers[idx].wins - 1),
+                  losses: updatedPlayers[idx].losses + 1,
+                };
+              }
+            }
+            // Add 1 win to new winners
+            for (const p of newWinningRoster) {
+              const idx = updatedPlayers.findIndex(
+                (pl) => pl.ign.toLowerCase() === p.ign.toLowerCase()
+              );
+              if (idx !== -1) {
+                updatedPlayers[idx] = {
+                  ...updatedPlayers[idx],
+                  wins: updatedPlayers[idx].wins + 1,
+                  losses: Math.max(0, updatedPlayers[idx].losses - 1),
+                };
+              }
+            }
+          }
+
+          if (mvpChanged) {
+            if (oldRecord.mvpIgn) {
+              const oldMvpIdx = updatedPlayers.findIndex(
+                (pl) => pl.ign.toLowerCase() === oldRecord.mvpIgn.toLowerCase()
+              );
+              if (oldMvpIdx !== -1) {
+                updatedPlayers[oldMvpIdx] = {
+                  ...updatedPlayers[oldMvpIdx],
+                  mvpCount: Math.max(0, (updatedPlayers[oldMvpIdx].mvpCount || 0) - 1),
+                };
+              }
+            }
+            if (updated.mvpIgn) {
+              const newMvpIdx = updatedPlayers.findIndex(
+                (pl) => pl.ign.toLowerCase() === updated.mvpIgn.toLowerCase()
+              );
+              if (newMvpIdx !== -1) {
+                updatedPlayers[newMvpIdx] = {
+                  ...updatedPlayers[newMvpIdx],
+                  mvpCount: (updatedPlayers[newMvpIdx].mvpCount || 0) + 1,
+                };
+              }
+            }
+          }
+
+          try {
+            localStorage.setItem(STORAGE_KEYS.players, JSON.stringify(updatedPlayers));
+          } catch {
+            // ignore
+          }
+          return updatedPlayers;
+        });
+      }
+    }
+
     setMatchHistory((prev) => {
       const next = prev.map((m) => (m.id === updated.id ? updated : m));
       try {
@@ -1546,6 +1638,11 @@ export default function App() {
       return;
     }
 
+    const neededSets = Math.min(5, Math.ceil((openIdx + 1) / 10));
+    if (neededSets > activeSetCount) {
+      setActiveSetCount(neededSets);
+    }
+
     setSlots((prev) => {
       const next = [...prev];
       next[openIdx] = {
@@ -1593,15 +1690,17 @@ export default function App() {
     const losingRoster =
       winner === 'Blue' ? liveMatch.teamRed : liveMatch.teamBlue;
 
-    const winningMvpIgn =
+    const winningMvpRaw =
       winner === 'Blue'
-        ? blueStarIgn || liveMatch.teamBlue[0]?.ign || liveMatch.mvpIgn
-        : redStarIgn || liveMatch.teamRed[0]?.ign || liveMatch.mvpIgn;
+        ? (blueStarIgn || liveMatch.teamBlue[0]?.ign || liveMatch.mvpIgn)
+        : (redStarIgn || liveMatch.teamRed[0]?.ign || liveMatch.mvpIgn);
+    const winningMvpIgn = winningMvpRaw === 'None' ? '' : winningMvpRaw;
 
-    const losingSvpIgn =
+    const losingSvpRaw =
       winner === 'Blue'
-        ? redStarIgn || liveMatch.teamRed[0]?.ign || ''
-        : blueStarIgn || liveMatch.teamBlue[0]?.ign || '';
+        ? (redStarIgn || liveMatch.teamRed[0]?.ign || '')
+        : (blueStarIgn || liveMatch.teamBlue[0]?.ign || '');
+    const losingSvpIgn = losingSvpRaw === 'None' ? '' : losingSvpRaw;
 
     const bKills = blueKillsInput.trim();
     const rKills = redKillsInput.trim();
@@ -1615,9 +1714,49 @@ export default function App() {
       formattedKillScore = dur;
     }
 
+    // Auto-calculate true MLBB rating and medals for all 10 players
+    const finalBlue = liveMatch.teamBlue.map((p) => {
+      const won = winner === 'Blue';
+      const isMvp = won && Boolean(winningMvpIgn) && p.ign.toLowerCase() === winningMvpIgn.toLowerCase();
+      const isSvp = !won && Boolean(losingSvpIgn) && p.ign.toLowerCase() === losingSvpIgn.toLowerCase();
+      const calc = calculateMlbbRating(p.kda, won, isMvp, isSvp);
+      const medal = isMvp ? 'MVP' : isSvp ? 'SVP' : (p.medal || calc.medal);
+      const rating = p.rating || calc.rating;
+      const isFeeder = medal === 'Bronze' || p.isFeeder || calc.isFeeder;
+      return {
+        ...p,
+        won,
+        isMvp,
+        medal,
+        rating,
+        isFeeder,
+      };
+    });
+
+    const finalRed = liveMatch.teamRed.map((p) => {
+      const won = winner === 'Red';
+      const isMvp = won && Boolean(winningMvpIgn) && p.ign.toLowerCase() === winningMvpIgn.toLowerCase();
+      const isSvp = !won && Boolean(losingSvpIgn) && p.ign.toLowerCase() === losingSvpIgn.toLowerCase();
+      const calc = calculateMlbbRating(p.kda, won, isMvp, isSvp);
+      const medal = isMvp ? 'MVP' : isSvp ? 'SVP' : (p.medal || calc.medal);
+      const rating = p.rating || calc.rating;
+      const isFeeder = medal === 'Bronze' || p.isFeeder || calc.isFeeder;
+      return {
+        ...p,
+        won,
+        isMvp,
+        medal,
+        rating,
+        isFeeder,
+      };
+    });
+
+    const bronzePlayers = [...finalBlue, ...finalRed].filter((p) => p.medal === 'Bronze' || p.isFeeder);
+    const bronzeIgns = bronzePlayers.map((p) => p.ign);
+
     const allParticipants = [
-      ...winningRoster.map((p) => ({ ...p, won: true })),
-      ...losingRoster.map((p) => ({ ...p, won: false })),
+      ...finalBlue.map((p) => ({ ...p, won: winner === 'Blue' })),
+      ...finalRed.map((p) => ({ ...p, won: winner === 'Red' })),
     ];
 
     setPlayers((prevPlayers) => {
@@ -1626,6 +1765,7 @@ export default function App() {
       for (const participant of allParticipants) {
         const isWinningMvp =
           participant.won &&
+          Boolean(winningMvpIgn) &&
           participant.ign.toLowerCase() === winningMvpIgn.toLowerCase();
 
         const idx = updated.findIndex(
@@ -1682,29 +1822,23 @@ export default function App() {
       nextMatchId = `NGD-M${String(nextNum).padStart(2, '0')}`;
     }
 
-    const detectedFeeder =
-      (winner === 'Blue'
-        ? liveMatch.teamRed.find((p) => p.isFeeder || p.medal?.toLowerCase() === 'bronze')?.ign
-        : liveMatch.teamBlue.find((p) => p.isFeeder || p.medal?.toLowerCase() === 'bronze')?.ign) ||
-      liveMatch.teamRed.find((p) => p.isFeeder)?.ign ||
-      liveMatch.teamBlue.find((p) => p.isFeeder)?.ign;
-
     const newRecord: MatchHistoryRecord = {
       id: nextMatchId,
       roomName: liveMatch.roomName,
       completedAt: getCurrentTimeLabel(),
       winner,
-      mvpIgn: winningMvpIgn,
+      mvpIgn: winningMvpIgn || (winner === 'Blue' ? liveMatch.teamBlue[0]?.ign : liveMatch.teamRed[0]?.ign) || 'N/A',
       svpIgn: losingSvpIgn || undefined,
-      feederIgn: detectedFeeder || undefined,
+      feederIgn: bronzeIgns[0] || undefined,
+      feederIgns: bronzeIgns.length > 0 ? bronzeIgns : undefined,
       killScore: formattedKillScore || undefined,
       blueKills: bKills ? parseInt(bKills, 10) : undefined,
       redKills: rKills ? parseInt(rKills, 10) : undefined,
       seriesGameNumber: (liveMatch.blueSeriesWins || 0) + (liveMatch.redSeriesWins || 0) + 1,
       seriesScore: `${liveMatch.blueSeriesWins || 0} - ${liveMatch.redSeriesWins || 0}`,
       screenshotUrl: undefined,
-      teamBlue: liveMatch.teamBlue,
-      teamRed: liveMatch.teamRed,
+      teamBlue: finalBlue,
+      teamRed: finalRed,
       durationText: dur || 'Finished',
     };
 
@@ -1777,7 +1911,66 @@ export default function App() {
 
   const handleDeleteMatchHistoryItem = async (matchId: string) => {
     if (!isAdmin) return;
-    setMatchHistory((prev) => prev.filter((m) => m.id !== matchId));
+    const matchToDelete = matchHistory.find((m) => m.id === matchId);
+    if (matchToDelete) {
+      setPlayers((prevPlayers) => {
+        let updatedPlayers = [...prevPlayers];
+        const winners =
+          matchToDelete.winner === 'Blue' ? matchToDelete.teamBlue : matchToDelete.teamRed;
+        const losers =
+          matchToDelete.winner === 'Blue' ? matchToDelete.teamRed : matchToDelete.teamBlue;
+
+        for (const p of winners) {
+          const idx = updatedPlayers.findIndex(
+            (pl) => pl.ign.toLowerCase() === p.ign.toLowerCase()
+          );
+          if (idx !== -1) {
+            updatedPlayers[idx] = {
+              ...updatedPlayers[idx],
+              wins: Math.max(0, updatedPlayers[idx].wins - 1),
+            };
+          }
+        }
+        for (const p of losers) {
+          const idx = updatedPlayers.findIndex(
+            (pl) => pl.ign.toLowerCase() === p.ign.toLowerCase()
+          );
+          if (idx !== -1) {
+            updatedPlayers[idx] = {
+              ...updatedPlayers[idx],
+              losses: Math.max(0, updatedPlayers[idx].losses - 1),
+            };
+          }
+        }
+        if (matchToDelete.mvpIgn) {
+          const mvpIdx = updatedPlayers.findIndex(
+            (pl) => pl.ign.toLowerCase() === matchToDelete.mvpIgn.toLowerCase()
+          );
+          if (mvpIdx !== -1) {
+            updatedPlayers[mvpIdx] = {
+              ...updatedPlayers[mvpIdx],
+              mvpCount: Math.max(0, (updatedPlayers[mvpIdx].mvpCount || 0) - 1),
+            };
+          }
+        }
+        try {
+          localStorage.setItem(STORAGE_KEYS.players, JSON.stringify(updatedPlayers));
+        } catch {
+          // ignore
+        }
+        return updatedPlayers;
+      });
+    }
+
+    setMatchHistory((prev) => {
+      const next = prev.filter((m) => m.id !== matchId);
+      try {
+        localStorage.setItem(STORAGE_KEYS.history, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
     await deleteMatchHistoryFromSupabase(matchId).catch(() => {});
     triggerToast(t.toastHistoryDeleted);
   };
@@ -2310,7 +2503,7 @@ export default function App() {
                       <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white truncate">
                         <span>
                           {linkedIgn
-                            ? `Naka-link: ${linkedIgn}`
+                            ? (language === 'tl' ? `Naka-link: ${linkedIgn}` : `Linked: ${linkedIgn}`)
                             : user.displayName || user.email}
                         </span>
                         {linkedIgn && (
@@ -2327,16 +2520,29 @@ export default function App() {
                                 s.ign.toLowerCase() ===
                                   linkedIgn.toLowerCase()
                             )
-                            ? `Nasa listahan ka na sa Slot #${
-                                slots.findIndex(
-                                  (s) =>
-                                    s &&
-                                    s.ign.toLowerCase() ===
-                                      linkedIgn.toLowerCase()
-                                ) + 1
-                              }!`
-                            : '1-click para pumasok sa palista gamit ang iyong IGN at saved roles.'
-                          : 'I-claim o i-link ang iyong MLBB IGN para mag-1-click palista at ma-highlight sa leaderboard!'}
+                            ? (language === 'tl'
+                                ? `Nasa listahan ka na sa Slot #${
+                                    slots.findIndex(
+                                      (s) =>
+                                        s &&
+                                        s.ign.toLowerCase() ===
+                                          linkedIgn.toLowerCase()
+                                    ) + 1
+                                  }!`
+                                : `You are already listed in Slot #${
+                                    slots.findIndex(
+                                      (s) =>
+                                        s &&
+                                        s.ign.toLowerCase() ===
+                                          linkedIgn.toLowerCase()
+                                    ) + 1
+                                  }!`)
+                            : (language === 'tl'
+                                ? '1-click para pumasok sa palista gamit ang iyong IGN at saved roles.'
+                                : '1-click to join open slots with your IGN and saved roles.')
+                          : (language === 'tl'
+                              ? 'I-claim o i-link ang iyong MLBB IGN para mag-1-click palista at ma-highlight sa leaderboard!'
+                              : 'Claim or link your MLBB IGN for 1-click queueing and leaderboard highlights!')}
                       </p>
                     </div>
                   </div>
@@ -2353,7 +2559,7 @@ export default function App() {
                           onClick={handleRemoveMyIgnFromQueue}
                           className="min-h-[36px] px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500 text-rose-600 dark:text-rose-400 hover:text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
                         >
-                          <span>Alisin Ako sa Slot</span>
+                          <span>{language === 'tl' ? 'Alisin Ako sa Slot' : 'Remove Me from Slot'}</span>
                         </button>
                       ) : (
                         <button
@@ -2362,7 +2568,7 @@ export default function App() {
                           className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 text-xs font-bold hover:opacity-90 transition flex items-center gap-1.5 cursor-pointer shadow-xs"
                         >
                           <Zap className="w-3.5 h-3.5 fill-current shrink-0" />
-                          <span>1-Click Palista ({linkedIgn})</span>
+                          <span>{language === 'tl' ? `1-Click Palista (${linkedIgn})` : `1-Click Join (${linkedIgn})`}</span>
                         </button>
                       )
                     ) : (
@@ -2372,7 +2578,7 @@ export default function App() {
                         className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-[#f1c40f] text-slate-950 text-xs font-bold hover:bg-yellow-300 transition flex items-center gap-1.5 cursor-pointer"
                       >
                         <UserPlus className="w-3.5 h-3.5 shrink-0" />
-                        <span>I-link ang Aking IGN</span>
+                        <span>{language === 'tl' ? 'I-link ang Aking IGN' : 'Link My IGN'}</span>
                       </button>
                     )}
                   </div>
@@ -2797,7 +3003,9 @@ export default function App() {
                           className="w-full min-h-[38px] px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-cyan-600 dark:hover:border-[#00f2fe] flex items-center justify-center gap-1.5 cursor-pointer"
                         >
                           <Copy className="w-3.5 h-3.5 shrink-0" />
-                          <span className="truncate">Kopyahin Game {setNum}</span>
+                          <span className="truncate">
+                            {language === 'tl' ? `Kopyahin Game ${setNum}` : `Copy Game ${setNum}`}
+                          </span>
                         </button>
 
                         {!isGame1 ? (
@@ -2806,7 +3014,7 @@ export default function App() {
                               type="button"
                               onClick={() => handlePromoteSetToGame1(setIdx)}
                               className="min-h-[38px] px-2 py-1.5 rounded-xl bg-[#f1c40f] text-slate-950 font-display font-bold text-xs hover:bg-yellow-300 transition flex items-center justify-center gap-1 cursor-pointer truncate"
-                              title="I-promote itong Game bilang Game 1"
+                              title={language === 'tl' ? "I-promote itong Game bilang Game 1" : "Promote this Game to Game 1"}
                             >
                               <ArrowUpRight className="w-3.5 h-3.5 shrink-0" />
                               <span className="truncate">Promote</span>
@@ -2815,7 +3023,7 @@ export default function App() {
                               type="button"
                               onClick={() => handleClearSingleSet(setIdx)}
                               className="min-h-[38px] px-2 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-rose-600 dark:text-rose-400 hover:text-white text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer truncate"
-                              title="Burahin ang mga player sa game na ito"
+                              title={language === 'tl' ? "Burahin ang mga player sa game na ito" : "Clear players in this game"}
                             >
                               <Trash2 className="w-3.5 h-3.5 shrink-0" />
                               <span className="truncate">Clear</span>
@@ -2828,7 +3036,9 @@ export default function App() {
                             className="w-full min-h-[38px] px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-cyan-600 dark:hover:border-[#00f2fe] flex items-center justify-center gap-1.5 cursor-pointer"
                           >
                             <Sparkles className="w-3.5 h-3.5 text-cyan-600 dark:text-[#00f2fe] shrink-0" />
-                            <span className="truncate">Kopyahin Lahat ng Sets</span>
+                            <span className="truncate">
+                              {language === 'tl' ? 'Kopyahin Lahat ng Sets' : 'Copy All Sets'}
+                            </span>
                           </button>
                         )}
                       </div>
@@ -2856,15 +3066,16 @@ export default function App() {
                   </div>
                   <div>
                     <h3 className="text-sm sm:text-base font-display font-bold text-slate-900 dark:text-white">
-                      Magdagdag ng Game {activeSetCount + 1}
+                      {language === 'tl' ? `Magdagdag ng Game ${activeSetCount + 1}` : `Add Game ${activeSetCount + 1}`}
                     </h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs">
-                      May karagdagang participants na sasali? I-click para magbukas ng Slots{' '}
-                      {activeSetCount * 10 + 1}–{(activeSetCount + 1) * 10}.
+                      {language === 'tl'
+                        ? `May karagdagang participants na sasali? I-click para magbukas ng Slots ${activeSetCount * 10 + 1}–${(activeSetCount + 1) * 10}.`
+                        : `More participants joining? Click to open Slots ${activeSetCount * 10 + 1}–${(activeSetCount + 1) * 10}.`}
                     </p>
                   </div>
                   <span className="px-4 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold text-xs shadow-xs">
-                    + Buksan ang Game {activeSetCount + 1}
+                    {language === 'tl' ? `+ Buksan ang Game ${activeSetCount + 1}` : `+ Open Game ${activeSetCount + 1}`}
                   </span>
                 </div>
               )}
@@ -3501,10 +3712,14 @@ export default function App() {
                 <div className="min-w-0">
                   <h3 className="text-base sm:text-lg font-display font-bold text-slate-900 dark:text-white flex items-center gap-2">
                     <Trophy className="w-4 h-4 text-[#f1c40f] shrink-0" />
-                    <span className="truncate">🏆 I-record ang Resulta ng Laban (Manual Scoring)</span>
+                    <span className="truncate">
+                      {language === 'tl' ? '🏆 I-record ang Resulta ng Laban (Manual Scoring)' : '🏆 Record Battle Result (Manual Scoring)'}
+                    </span>
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Piliin ang nanalo (Team Blue o Red), i-set ang MVP/SVP, at i-record ang score at tagal ng laro.
+                    {language === 'tl'
+                      ? 'Piliin ang nanalo (Team Blue o Red), i-set ang MVP/SVP, at i-record ang score at tagal ng laro.'
+                      : 'Select winner (Team Blue or Red), set MVP/SVP, and record match score & duration.'}
                   </p>
                 </div>
 
@@ -3513,7 +3728,11 @@ export default function App() {
                   onClick={() => setShowManualStatsEditor((v) => !v)}
                   className="min-h-[38px] px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-xs text-slate-700 dark:text-slate-300 font-semibold flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
                 >
-                  <span>{showManualStatsEditor ? '▲ Itago ang Player Stats' : '✏️ Detalyadong Player Stats (KDA / Damage)'}</span>
+                  <span>
+                    {showManualStatsEditor
+                      ? (language === 'tl' ? '▲ Itago ang Player Stats' : '▲ Hide Player Stats')
+                      : (language === 'tl' ? '✏️ Detalyadong Player Stats (KDA / Damage)' : '✏️ Detailed Player Stats (KDA / Damage)')}
+                  </span>
                 </button>
               </div>
 
@@ -3521,6 +3740,7 @@ export default function App() {
               {showManualStatsEditor && (
                 <div className="p-3.5 sm:p-4 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-200 dark:border-slate-800">
                   <ManualStatsEditor
+                    language={language}
                     teamBlue={liveMatch.teamBlue}
                     teamRed={liveMatch.teamRed}
                     onUpdateBluePlayer={(idx, updated) => {
@@ -3545,21 +3765,50 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-1">
                 {/* Team Blue Star / MVP Selector */}
                 <div className="md:col-span-4 min-w-0">
-                  <label className="block text-[11px] font-mono text-cyan-700 dark:text-[#00f2fe] font-semibold mb-1 truncate">
-                    {t.blueMvpLabel}
-                  </label>
-                  <select
-                    value={blueStarIgn}
-                    onChange={(e) => setBlueStarIgn(e.target.value)}
-                    className="w-full max-w-full min-w-0 h-10 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-cyan-500/40 dark:border-[#00f2fe]/40 text-xs font-bold text-slate-900 dark:text-white truncate focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
-                  >
-                    {liveMatch.teamBlue.map((p, idx) => (
-                      <option key={`${p.ign}-${idx}`} value={p.ign}>
-                        👑 {p.ign} ({ROLE_META[p.assignedLane].gcLabel}
-                        {p.kda ? ` · ${p.kda}` : ''})
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-mono text-cyan-700 dark:text-[#00f2fe] font-semibold truncate">
+                      {t.blueMvpLabel}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setCustomBlueMvp((v) => !v)}
+                      className="text-[10px] text-cyan-600 dark:text-[#00f2fe] hover:underline cursor-pointer font-medium"
+                    >
+                      {customBlueMvp ? (language === 'tl' ? 'Pumili sa Roster' : 'Pick from Roster') : '✏️ Custom IGN'}
+                    </button>
+                  </div>
+                  {customBlueMvp ? (
+                    <input
+                      type="text"
+                      value={blueStarIgn}
+                      onChange={(e) => setBlueStarIgn(e.target.value)}
+                      placeholder={language === 'tl' ? "I-type ang MVP IGN o 'None'..." : "Type MVP IGN or 'None'..."}
+                      className="w-full h-10 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-cyan-500/40 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-cyan-600"
+                    />
+                  ) : (
+                    <select
+                      value={blueStarIgn}
+                      onChange={(e) => {
+                        if (e.target.value === '__CUSTOM__') {
+                          setCustomBlueMvp(true);
+                        } else {
+                          setBlueStarIgn(e.target.value);
+                        }
+                      }}
+                      className="w-full max-w-full min-w-0 h-10 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-cyan-500/40 dark:border-[#00f2fe]/40 text-xs font-bold text-slate-900 dark:text-white truncate focus:outline-none focus:border-cyan-600 dark:focus:border-[#00f2fe]"
+                    >
+                      {liveMatch.teamBlue.map((p, idx) => (
+                        <option key={`${p.ign}-${idx}`} value={p.ign}>
+                          👑 {p.ign} ({ROLE_META[p.assignedLane].gcLabel}
+                          {p.kda ? ` · ${p.kda}` : ''})
+                        </option>
+                      ))}
+                      <option value="__CUSTOM__">
+                        {language === 'tl' ? '✏️ I-type ang Custom / Ibang IGN...' : '✏️ Custom / Type Other IGN...'}
                       </option>
-                    ))}
-                  </select>
+                      <option value="None">{language === 'tl' ? 'Walang MVP (None)' : 'No MVP (None)'}</option>
+                    </select>
+                  )}
                 </div>
 
                 {/* Kill Score & Duration (Optional) */}
@@ -3608,21 +3857,50 @@ export default function App() {
 
                 {/* Team Red Star / MVP Selector */}
                 <div className="md:col-span-4 min-w-0">
-                  <label className="block text-[11px] font-mono text-rose-600 dark:text-rose-400 font-semibold mb-1 truncate">
-                    {t.redMvpLabel}
-                  </label>
-                  <select
-                    value={redStarIgn}
-                    onChange={(e) => setRedStarIgn(e.target.value)}
-                    className="w-full max-w-full min-w-0 h-10 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-rose-500/40 text-xs font-bold text-slate-900 dark:text-white truncate focus:outline-none focus:border-rose-500"
-                  >
-                    {liveMatch.teamRed.map((p, idx) => (
-                      <option key={`${p.ign}-${idx}`} value={p.ign}>
-                        👑 {p.ign} ({ROLE_META[p.assignedLane].gcLabel}
-                        {p.kda ? ` · ${p.kda}` : ''})
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-mono text-rose-600 dark:text-rose-400 font-semibold truncate">
+                      {t.redMvpLabel}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setCustomRedMvp((v) => !v)}
+                      className="text-[10px] text-rose-600 dark:text-rose-400 hover:underline cursor-pointer font-medium"
+                    >
+                      {customRedMvp ? (language === 'tl' ? 'Pumili sa Roster' : 'Pick from Roster') : '✏️ Custom IGN'}
+                    </button>
+                  </div>
+                  {customRedMvp ? (
+                    <input
+                      type="text"
+                      value={redStarIgn}
+                      onChange={(e) => setRedStarIgn(e.target.value)}
+                      placeholder={language === 'tl' ? "I-type ang MVP IGN o 'None'..." : "Type MVP IGN or 'None'..."}
+                      className="w-full h-10 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-rose-500/40 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-rose-500"
+                    />
+                  ) : (
+                    <select
+                      value={redStarIgn}
+                      onChange={(e) => {
+                        if (e.target.value === '__CUSTOM__') {
+                          setCustomRedMvp(true);
+                        } else {
+                          setRedStarIgn(e.target.value);
+                        }
+                      }}
+                      className="w-full max-w-full min-w-0 h-10 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-rose-500/40 text-xs font-bold text-slate-900 dark:text-white truncate focus:outline-none focus:border-rose-500"
+                    >
+                      {liveMatch.teamRed.map((p, idx) => (
+                        <option key={`${p.ign}-${idx}`} value={p.ign}>
+                          👑 {p.ign} ({ROLE_META[p.assignedLane].gcLabel}
+                          {p.kda ? ` · ${p.kda}` : ''})
+                        </option>
+                      ))}
+                      <option value="__CUSTOM__">
+                        {language === 'tl' ? '✏️ I-type ang Custom / Ibang IGN...' : '✏️ Custom / Type Other IGN...'}
                       </option>
-                    ))}
-                  </select>
+                      <option value="None">{language === 'tl' ? 'Walang MVP (None)' : 'No MVP (None)'}</option>
+                    </select>
+                  )}
                 </div>
               </div>
 
@@ -3751,7 +4029,7 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* MVP & SVP Highlights */}
+                        {/* MVP, SVP & Tanso Highlights */}
                         <div className="flex flex-wrap items-center gap-2 text-xs">
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 dark:bg-[#f1c40f]/15 border border-amber-500/35 text-amber-800 dark:text-[#f1c40f] font-bold">
                             <Crown className="w-3.5 h-3.5 shrink-0" />
@@ -3763,6 +4041,23 @@ export default function App() {
                               <span>Defeat MVP (SVP): {record.svpIgn}</span>
                             </span>
                           )}
+                          {(() => {
+                            const tansos =
+                              record.feederIgns && record.feederIgns.length > 0
+                                ? record.feederIgns
+                                : record.feederIgn
+                                  ? [record.feederIgn]
+                                  : [];
+                            if (tansos.length === 0) return null;
+                            return (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-900/20 border border-amber-700/40 text-amber-600 dark:text-amber-400 font-semibold">
+                                <Skull className="w-3.5 h-3.5 shrink-0" />
+                                <span>
+                                  {language === 'tl' ? `Tanso (${tansos.length})` : `Bronze (${tansos.length})`}: {tansos.join(', ')}
+                                </span>
+                              </span>
+                            );
+                          })()}
                         </div>
 
                         {/* Compact Team Rosters */}
@@ -3806,6 +4101,7 @@ export default function App() {
            ===================================================================== */}
         {activeTab === 'stats' && (
           <GameStatsTab
+            language={language}
             matchHistory={matchHistory}
             onEditMatchStats={handleOpenEditMatchStats}
             isAdmin={isAdmin}
@@ -4663,6 +4959,7 @@ export default function App() {
       {/* Pre-Match Lineup Poster Modal */}
       {lineupPosterModalOpen && (
         <MatchPosterModal
+          language={language}
           match={{
             id: liveMatch.matchId || 'CUSTOM-5V5-LINEUP',
             roomName: liveMatch.roomName || 'Custom 5v5 Scrim',
@@ -4682,6 +4979,7 @@ export default function App() {
       {/* Scrim Results & Messenger GC Leaderboards Modal */}
       {showLeaderboardSummaryModal && (
         <LeaderboardSummaryModal
+          language={language}
           matchHistory={matchHistory}
           players={players}
           onClose={() => setShowLeaderboardSummaryModal(false)}
@@ -4834,16 +5132,106 @@ export default function App() {
                     if (!clean) return;
                     linkMyIgn(clean);
                     setClaimIgnModalOpen(false);
-                    triggerToast(`Nai-link na ang ${clean} sa iyong account!`);
+                    triggerToast(
+                      language === 'tl'
+                        ? `Nai-link na ang ${clean} sa iyong account!`
+                        : `Successfully linked ${clean} to your account!`
+                    );
                   }}
                   className="px-4 py-2 rounded-xl bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 text-xs font-bold hover:opacity-90 transition disabled:opacity-50 cursor-pointer shadow-xs"
                 >
-                  I-save ang IGN
+                  {language === 'tl' ? 'I-save ang IGN' : 'Save IGN'}
                 </button>
               </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Admin PIN Prompt Modal for Match Stats Editing */}
+      {showAdminPinModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-[#111827] border border-amber-500/40 p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-amber-500">
+                <Shield className="w-5 h-5 shrink-0" />
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                  Admin Access Required
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAdminPinModal(false);
+                  setPendingEditMatch(null);
+                  setAdminModalPinInput('');
+                  setAdminModalError(false);
+                }}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-white text-lg p-1 cursor-pointer"
+              >
+                ×
+              </button>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              {language === 'tl'
+                ? 'Ang pag-edit o pag-input ng stats sa Recent Battles ay para lamang sa Admin / Host. Ipasok ang Admin PIN para magpatuloy.'
+                : 'Editing or entering stats in Recent Battles is restricted to Admin / Host. Enter Admin PIN to proceed.'}
+            </p>
+            <form onSubmit={handleVerifyAdminPinForEdit} className="space-y-3">
+              <input
+                type="password"
+                value={adminModalPinInput}
+                onChange={(e) => {
+                  setAdminModalPinInput(e.target.value);
+                  setAdminModalError(false);
+                }}
+                placeholder="Enter Admin PIN..."
+                autoFocus
+                className={`w-full h-10 px-3 rounded-xl bg-slate-50 dark:bg-[#0b0f19] border ${
+                  adminModalError
+                    ? 'border-rose-500 focus:border-rose-500'
+                    : 'border-slate-300 dark:border-slate-700 focus:border-amber-500'
+                } text-sm font-bold text-slate-900 dark:text-white focus:outline-none`}
+              />
+              {adminModalError && (
+                <p className="text-xs text-rose-500 font-medium">
+                  {t.adminWrongPin}
+                </p>
+              )}
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAdminPinModal(false);
+                    setPendingEditMatch(null);
+                    setAdminModalPinInput('');
+                    setAdminModalError(false);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold cursor-pointer"
+                >
+                  {t.cancelBtn}
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition cursor-pointer"
+                >
+                  {language === 'tl' ? 'I-verify at Mag-edit' : 'Verify & Edit'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Match Stats Modal */}
+      {editingMatchRecord && (
+        <EditMatchStatsModal
+          language={language}
+          match={editingMatchRecord}
+          isOpen={Boolean(editingMatchRecord)}
+          onClose={() => setEditingMatchRecord(null)}
+          onSave={handleSaveEditedMatchRecord}
+        />
       )}
     </div>
   );

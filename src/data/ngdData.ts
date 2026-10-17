@@ -170,6 +170,8 @@ export interface MatchParticipant {
   gold?: number;
   medal?: string; // 'MVP' | 'SVP' | 'Gold' | 'Silver' | 'Bronze'
   isFeeder?: boolean;
+  isMvp?: boolean;
+  won?: boolean;
 }
 
 export interface LiveMatchState {
@@ -194,6 +196,7 @@ export interface MatchHistoryRecord {
   mvpIgn: string;
   svpIgn?: string;
   feederIgn?: string;
+  feederIgns?: string[];
   killScore?: string;
   blueKills?: number;
   redKills?: number;

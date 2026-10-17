@@ -305,12 +305,21 @@ Powered by NGD Queue Master`;
                           </span>
                         )}
 
-                        {match.feederIgn && (
-                          <span className="inline-flex items-center gap-1 text-amber-500 font-semibold bg-amber-950/40 px-2 py-0.5 rounded border border-amber-600/30">
-                            <Skull className="w-3 h-3 text-amber-500" />
-                            <span>Tanso: {match.feederIgn}</span>
-                          </span>
-                        )}
+                        {(() => {
+                          const tansos =
+                            match.feederIgns && match.feederIgns.length > 0
+                              ? match.feederIgns
+                              : match.feederIgn
+                                ? [match.feederIgn]
+                                : [];
+                          if (tansos.length === 0) return null;
+                          return (
+                            <span className="inline-flex items-center gap-1 text-amber-500 font-semibold bg-amber-950/40 px-2 py-0.5 rounded border border-amber-600/30">
+                              <Skull className="w-3 h-3 text-amber-500" />
+                              <span>Tanso ({tansos.length}): {tansos.join(', ')}</span>
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -571,7 +580,11 @@ Powered by NGD Queue Master`;
                             {match.teamBlue.map((player) => {
                               const isMvp = player.ign.toLowerCase() === match.mvpIgn.toLowerCase();
                               const isSvp = match.svpIgn && player.ign.toLowerCase() === match.svpIgn.toLowerCase();
-                              const isFeeder = match.feederIgn && player.ign.toLowerCase() === match.feederIgn.toLowerCase();
+                              const isFeeder =
+                                player.isFeeder ||
+                                player.medal?.toLowerCase() === 'bronze' ||
+                                Boolean(match.feederIgns?.some((f) => f.toLowerCase() === player.ign.toLowerCase())) ||
+                                Boolean(match.feederIgn && player.ign.toLowerCase() === match.feederIgn.toLowerCase());
 
                               return (
                                 <tr
@@ -725,7 +738,11 @@ Powered by NGD Queue Master`;
                             {match.teamRed.map((player) => {
                               const isMvp = player.ign.toLowerCase() === match.mvpIgn.toLowerCase();
                               const isSvp = match.svpIgn && player.ign.toLowerCase() === match.svpIgn.toLowerCase();
-                              const isFeeder = match.feederIgn && player.ign.toLowerCase() === match.feederIgn.toLowerCase();
+                              const isFeeder =
+                                player.isFeeder ||
+                                player.medal?.toLowerCase() === 'bronze' ||
+                                Boolean(match.feederIgns?.some((f) => f.toLowerCase() === player.ign.toLowerCase())) ||
+                                Boolean(match.feederIgn && player.ign.toLowerCase() === match.feederIgn.toLowerCase());
 
                               return (
                                 <tr

@@ -353,12 +353,16 @@ export function buildDirectLineup5v5(
         )
       : 0;
 
+  const startSlot = startIdx + 1;
+  const midSlot = startIdx + 5;
+  const endSlot = startIdx + 10;
+
   return {
     teamBlue,
     teamRed,
     blueAvgWr,
     redAvgWr,
-    sourceSummary: `Slot Order (1–5 vs 6–10) · Blue ${blueAvgWr}% WR vs Red ${redAvgWr}% WR`,
+    sourceSummary: `Slot Order (${startSlot}–${midSlot} vs ${midSlot + 1}–${endSlot}) · Blue ${blueAvgWr}% WR vs Red ${redAvgWr}% WR`,
   };
 }
 
@@ -833,3 +837,76 @@ export function formatBattleResultGcText(record: MatchHistoryRecord): string {
 
   return lines.join('\n');
 }
+
+/**
+ * MLBB In-Game Scoring & Medal Classification
+ * Calculates Rating (3.0 - 15.0) and Medal (MVP / SVP / Gold / Silver / Bronze)
+ * In MLBB, multiple players (1 to 5) can get Bronze / Tanso if their rating < 5.5 or deaths >= 6 with low KDA!
+ */
+export function calculateMlbbRating(
+  kda: string | undefined,
+  won: boolean,
+  isMvp = false,
+  isSvp = false
+): {
+  rating: string;
+  medal: 'MVP' | 'SVP' | 'Gold' | 'Silver' | 'Bronze';
+  isFeeder: boolean;
+} {
+  if (isMvp) {
+    let r = 10.5;
+    if (kda) {
+      const parts = kda.split(/[\/\-:\s]+/).map((p) => parseInt(p.trim(), 10));
+      const k = parts[0] || 0;
+      const d = parts[1] || 0;
+      const a = parts[2] || 0;
+      const ratio = (k + a) / Math.max(1, d);
+      r = Math.min(15.0, Math.max(10.0, 9.5 + ratio * 0.4));
+    }
+    return { rating: r.toFixed(1), medal: 'MVP', isFeeder: false };
+  }
+
+  if (isSvp) {
+    let r = 8.8;
+    if (kda) {
+      const parts = kda.split(/[\/\-:\s]+/).map((p) => parseInt(p.trim(), 10));
+      const k = parts[0] || 0;
+      const d = parts[1] || 0;
+      const a = parts[2] || 0;
+      const ratio = (k + a) / Math.max(1, d);
+      r = Math.min(12.5, Math.max(8.0, 7.8 + ratio * 0.35));
+    }
+    return { rating: r.toFixed(1), medal: 'SVP', isFeeder: false };
+  }
+
+  if (!kda) {
+    return won
+      ? { rating: '7.5', medal: 'Silver', isFeeder: false }
+      : { rating: '5.0', medal: 'Bronze', isFeeder: true };
+  }
+
+  const parts = kda.split(/[\/\-:\s]+/).map((p) => parseInt(p.trim(), 10));
+  const k = !isNaN(parts[0]) && parts[0] >= 0 ? parts[0] : 0;
+  const d = !isNaN(parts[1]) && parts[1] >= 0 ? parts[1] : 0;
+  const a = !isNaN(parts[2]) && parts[2] >= 0 ? parts[2] : 0;
+  const ratio = (k + a) / Math.max(1, d);
+
+  let rawScore: number;
+  if (won) {
+    rawScore = 6.2 + ratio * 0.7 - Math.max(0, d - 3) * 0.2;
+  } else {
+    rawScore = 4.2 + ratio * 0.6 - Math.max(0, d - 2) * 0.25;
+  }
+
+  const clamped = Math.min(13.0, Math.max(3.0, rawScore));
+  const ratingStr = clamped.toFixed(1);
+
+  if (clamped >= 8.5) {
+    return { rating: ratingStr, medal: 'Gold', isFeeder: false };
+  } else if (clamped >= 5.5) {
+    return { rating: ratingStr, medal: 'Silver', isFeeder: false };
+  } else {
+    return { rating: ratingStr, medal: 'Bronze', isFeeder: true };
+  }
+}
+

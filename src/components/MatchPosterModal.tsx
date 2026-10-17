@@ -654,22 +654,52 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
       ctx.fill();
       ctx.stroke();
 
+      const allTansos = all10Players.filter(
+        (p) =>
+          p.isFeeder ||
+          p.medal?.toLowerCase() === 'bronze' ||
+          Boolean(
+            match.feederIgns &&
+              match.feederIgns.some(
+                (f) => f.toLowerCase() === p.ign.toLowerCase()
+              )
+          ) ||
+          Boolean(
+            match.feederIgn &&
+              p.ign.toLowerCase() === match.feederIgn.toLowerCase()
+          )
+      );
+
+      const feederNames =
+        allTansos.length > 1
+          ? allTansos.map((t) => t.ign).join(' · ')
+          : categoryLeaders.topFeeder?.ign || 'Player';
+
       ctx.textAlign = 'left';
       ctx.fillStyle = '#f59e0b';
       ctx.font = '900 16px "Montserrat", sans-serif';
-      ctx.fillText('🪓 TANSO / FEEDER ALERT (MOST CASUALTIES)', 90, feederAlertY + 36);
+      ctx.fillText(
+        allTansos.length > 1
+          ? `🪓 TANSO SQUAD ALERT (${allTansos.length} PLAYERS WITH BRONZE)`
+          : '🪓 TANSO / FEEDER ALERT (MOST CASUALTIES)',
+        90,
+        feederAlertY + 36
+      );
 
       ctx.fillStyle = '#ffffff';
-      ctx.font = '900 28px "Montserrat", sans-serif';
+      ctx.font =
+        allTansos.length > 2
+          ? '900 20px "Montserrat", sans-serif'
+          : '900 28px "Montserrat", sans-serif';
       ctx.fillText(
-        categoryLeaders.topFeeder?.ign || 'Player',
+        feederNames,
         90,
         feederAlertY + 74
       );
 
       ctx.textAlign = 'right';
       ctx.fillStyle = '#ef4444';
-      ctx.font = 'bold 18px "JetBrains Mono", monospace';
+      ctx.font = 'bold 16px "JetBrains Mono", monospace';
       ctx.fillText(
         `KDA: ${categoryLeaders.topFeeder?.kda || '1/8/8'} · RATING: ${categoryLeaders.topFeeder?.rating || '4.6'}`,
         width - 90,
