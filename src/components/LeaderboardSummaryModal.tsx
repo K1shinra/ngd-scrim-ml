@@ -27,6 +27,7 @@ interface LeaderboardSummaryModalProps {
   onClose: () => void;
   onCopiedToast?: (msg: string) => void;
   onImportLeaderboardStats?: (newStats: PlayerLeaderboardStats[]) => void;
+  language?: 'en' | 'tl';
 }
 
 export const LeaderboardSummaryModal: React.FC<LeaderboardSummaryModalProps> = ({
@@ -35,6 +36,7 @@ export const LeaderboardSummaryModal: React.FC<LeaderboardSummaryModalProps> = (
   onClose,
   onCopiedToast,
   onImportLeaderboardStats,
+  language = 'en',
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeView, setActiveView] = useState<'preview' | 'raw' | 'paste'>('preview');
@@ -57,7 +59,11 @@ export const LeaderboardSummaryModal: React.FC<LeaderboardSummaryModalProps> = (
     navigator.clipboard.writeText(gcSummaryText).then(() => {
       setCopied(true);
       if (onCopiedToast) {
-        onCopiedToast('📋 Nakopya na ang Scrim Results & Leaderboards para sa Messenger GC!');
+        onCopiedToast(
+          language === 'tl'
+            ? '📋 Nakopya na ang Scrim Results & Leaderboards para sa Messenger GC!'
+            : '📋 Copied Scrim Results & Leaderboards for Messenger GC!'
+        );
       }
       setTimeout(() => setCopied(false), 2500);
     });
@@ -123,7 +129,11 @@ export const LeaderboardSummaryModal: React.FC<LeaderboardSummaryModalProps> = (
               }`}
             >
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              <span>{copied ? 'Na-copy na!' : 'Kopyahin para sa GC'}</span>
+              <span>
+                {copied
+                  ? (language === 'tl' ? 'Na-copy na!' : 'Copied!')
+                  : (language === 'tl' ? 'Kopyahin para sa GC' : 'Copy for GC')}
+              </span>
             </button>
             <button
               type="button"
@@ -224,13 +234,17 @@ export const LeaderboardSummaryModal: React.FC<LeaderboardSummaryModalProps> = (
                       }
                       setActiveView('preview');
                       if (onCopiedToast) {
-                        onCopiedToast(`✅ Na-update ang ${parsed.length} players sa Leaderboard!`);
+                        onCopiedToast(
+                          language === 'tl'
+                            ? `✅ Na-update ang ${parsed.length} players sa Leaderboard!`
+                            : `✅ Updated ${parsed.length} players on Leaderboard!`
+                        );
                       }
                     }
                   }}
                   className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs disabled:opacity-50 transition cursor-pointer shadow-md"
                 >
-                  ⚡ I-save at I-update ang Leaderboard
+                  {language === 'tl' ? '⚡ I-save at I-update ang Leaderboard' : '⚡ Save & Update Leaderboard'}
                 </button>
               </div>
             </div>
@@ -443,7 +457,9 @@ export const LeaderboardSummaryModal: React.FC<LeaderboardSummaryModalProps> = (
         {/* Modal Footer */}
         <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-[#0b0f19]">
           <p className="text-xs text-slate-500 dark:text-slate-400 truncate hidden sm:block">
-            I-paste ito sa Messenger GC pagkatapos ng bawat araw ng scrim!
+            {language === 'tl'
+              ? 'I-paste ito sa Messenger GC pagkatapos ng bawat araw ng scrim!'
+              : 'Paste this into your Messenger GC after each scrim session!'}
           </p>
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
             <button
@@ -451,7 +467,7 @@ export const LeaderboardSummaryModal: React.FC<LeaderboardSummaryModalProps> = (
               onClick={onClose}
               className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs cursor-pointer"
             >
-              Isara
+              {language === 'tl' ? 'Isara' : 'Close'}
             </button>
             <button
               type="button"
@@ -463,7 +479,11 @@ export const LeaderboardSummaryModal: React.FC<LeaderboardSummaryModalProps> = (
               }`}
             >
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              <span>{copied ? 'Na-kopyang Tagumpay!' : 'Kopyahin para sa Messenger GC'}</span>
+              <span>
+                {copied
+                  ? (language === 'tl' ? 'Na-kopyang Tagumpay!' : 'Successfully Copied!')
+                  : (language === 'tl' ? 'Kopyahin para sa Messenger GC' : 'Copy for Messenger GC')}
+              </span>
             </button>
           </div>
         </div>

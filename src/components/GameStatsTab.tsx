@@ -30,12 +30,14 @@ import {
   ROLE_META,
 } from '../data/ngdData';
 import { MatchPosterModal, PosterTemplate } from './MatchPosterModal';
+import { MlbbMedalBadge } from './MlbbMedalBadge';
 
 interface GameStatsTabProps {
   matchHistory: MatchHistoryRecord[];
   onUploadScreenshotForMatch?: (matchId: string, file: File) => void;
   onEditMatchStats?: (match: MatchHistoryRecord) => void;
   isAdmin?: boolean;
+  language?: 'en' | 'tl';
 }
 
 export const GameStatsTab: React.FC<GameStatsTabProps> = ({
@@ -43,6 +45,7 @@ export const GameStatsTab: React.FC<GameStatsTabProps> = ({
   onUploadScreenshotForMatch,
   onEditMatchStats,
   isAdmin = false,
+  language = 'en',
 }) => {
   const [selectedMatchForPoster, setSelectedMatchForPoster] =
     useState<MatchHistoryRecord | null>(null);
@@ -293,17 +296,45 @@ Powered by NGD Queue Master`;
                         )}
                         <span className="text-slate-400">⏱️ {match.durationText || '15:00'}</span>
 
-                        <span className="inline-flex items-center gap-1 text-amber-300 font-semibold bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
-                          <Trophy className="w-3 h-3 text-yellow-400" />
-                          <span>MVP: {match.mvpIgn}</span>
-                        </span>
+                        {(() => {
+                          const allP = [...match.teamBlue, ...match.teamRed];
+                          const mvpData = allP.find(
+                            (p) => p.ign.toLowerCase() === match.mvpIgn.toLowerCase()
+                          );
+                          return (
+                            <span className="inline-flex items-center gap-1.5">
+                              <MlbbMedalBadge
+                                medal={mvpData?.medal || 'Mythic MVP'}
+                                rating={mvpData?.rating}
+                                isMvp={true}
+                                size="xs"
+                                language={language}
+                                showScore={true}
+                              />
+                              <span className="font-display font-bold text-slate-100">{match.mvpIgn}</span>
+                            </span>
+                          );
+                        })()}
 
-                        {match.svpIgn && (
-                          <span className="inline-flex items-center gap-1 text-purple-300 font-semibold bg-purple-400/10 px-2 py-0.5 rounded border border-purple-400/20">
-                            <Award className="w-3 h-3 text-purple-400" />
-                            <span>SVP: {match.svpIgn}</span>
-                          </span>
-                        )}
+                        {match.svpIgn && (() => {
+                          const allP = [...match.teamBlue, ...match.teamRed];
+                          const svpData = allP.find(
+                            (p) => p.ign.toLowerCase() === match.svpIgn.toLowerCase()
+                          );
+                          return (
+                            <span className="inline-flex items-center gap-1.5">
+                              <MlbbMedalBadge
+                                medal={svpData?.medal || 'Mythic SVP'}
+                                rating={svpData?.rating}
+                                isSvp={true}
+                                size="xs"
+                                language={language}
+                                showScore={true}
+                              />
+                              <span className="font-display font-bold text-slate-100">{match.svpIgn}</span>
+                            </span>
+                          );
+                        })()}
 
                         {(() => {
                           const tansos =
@@ -316,7 +347,7 @@ Powered by NGD Queue Master`;
                           return (
                             <span className="inline-flex items-center gap-1 text-amber-500 font-semibold bg-amber-950/40 px-2 py-0.5 rounded border border-amber-600/30">
                               <Skull className="w-3 h-3 text-amber-500" />
-                              <span>Tanso ({tansos.length}): {tansos.join(', ')}</span>
+                              <span>{language === 'tl' ? `Tanso (${tansos.length})` : `Bronze (${tansos.length})`}: {tansos.join(', ')}</span>
                             </span>
                           );
                         })()}
@@ -351,11 +382,11 @@ Powered by NGD Queue Master`;
                       <button
                         type="button"
                         onClick={() => openPosterModal(match, 'feeder')}
-                        title="Export humorous Tanso / Feeder award graphic"
+                        title={language === 'tl' ? "I-export ang nakakatawang Tanso / Feeder award graphic" : "Export humorous Bronze / Feeder award graphic"}
                         className="px-2.5 py-1.5 rounded-lg hover:bg-slate-700 text-amber-300 text-xs flex items-center gap-1 transition cursor-pointer"
                       >
                         <Skull className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Tanso Award</span>
+                        <span>{language === 'tl' ? 'Tanso Award' : 'Bronze Award'}</span>
                       </button>
                     </div>
 
@@ -515,7 +546,7 @@ Powered by NGD Queue Master`;
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5 text-amber-500 text-xs font-bold">
                           <Skull className="w-4 h-4 text-amber-500 shrink-0" />
-                          <span>Tanso / Feeder</span>
+                          <span>{language === 'tl' ? 'Tanso / Feeder' : 'Bronze / Feeder'}</span>
                         </div>
                         <button
                           type="button"
@@ -527,7 +558,7 @@ Powered by NGD Queue Master`;
                       </div>
                       <div className="mt-2">
                         <p className="text-sm font-display font-black text-amber-200 truncate">
-                          {leaders.feeder?.ign || match.feederIgn || 'Walang Tanso!'}
+                          {leaders.feeder?.ign || match.feederIgn || (language === 'tl' ? 'Walang Tanso!' : 'No Bronze!')}
                         </p>
                         <p className="text-[11px] font-mono text-amber-400 font-semibold">
                           {leaders.feeder?.kda
@@ -608,7 +639,7 @@ Powered by NGD Queue Master`;
                                       )}
                                       {isFeeder && (
                                         <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-700 text-amber-100 font-black">
-                                          TANSO
+                                          {language === 'tl' ? 'TANSO' : 'BRONZE'}
                                         </span>
                                       )}
                                     </div>
@@ -619,8 +650,19 @@ Powered by NGD Queue Master`;
                                   <td className="py-2.5 px-2 text-slate-200 font-bold">
                                     {player.kda || '—'}
                                   </td>
-                                  <td className="py-2.5 px-2 text-amber-400 font-bold">
-                                    {player.rating || '—'}
+                                  <td className="py-2.5 px-2 font-bold">
+                                    {(() => {
+                                      const num = parseFloat(player.rating || '0');
+                                      const color =
+                                        num >= 11.0
+                                          ? 'text-fuchsia-300 font-extrabold drop-shadow-[0_0_6px_rgba(217,70,239,0.5)]'
+                                          : num >= 6.8
+                                            ? 'text-yellow-400'
+                                            : num >= 4.0
+                                              ? 'text-slate-300'
+                                              : 'text-amber-500';
+                                      return <span className={color}>{player.rating || '—'}</span>;
+                                    })()}
                                   </td>
                                   <td className="py-2.5 px-3">
                                     <div className="text-slate-300">
@@ -676,21 +718,14 @@ Powered by NGD Queue Master`;
                                     {player.teamfightPct ? `${player.teamfightPct}%` : '—'}
                                   </td>
                                   <td className="py-2.5 px-2 text-right">
-                                    {player.medal ? (
-                                      <span
-                                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
-                                          player.medal.toLowerCase() === 'gold'
-                                            ? 'bg-yellow-500/20 text-yellow-300'
-                                            : player.medal.toLowerCase() === 'silver'
-                                            ? 'bg-slate-400/20 text-slate-300'
-                                            : 'bg-amber-600/20 text-amber-400'
-                                        }`}
-                                      >
-                                        {player.medal}
-                                      </span>
-                                    ) : (
-                                      '—'
-                                    )}
+                                    <MlbbMedalBadge
+                                      medal={player.medal}
+                                      rating={player.rating}
+                                      isMvp={isMvp}
+                                      isSvp={isSvp}
+                                      size="xs"
+                                      language={language}
+                                    />
                                   </td>
                                 </tr>
                               );
@@ -766,7 +801,7 @@ Powered by NGD Queue Master`;
                                       )}
                                       {isFeeder && (
                                         <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-700 text-amber-100 font-black">
-                                          TANSO
+                                          {language === 'tl' ? 'TANSO' : 'BRONZE'}
                                         </span>
                                       )}
                                     </div>
@@ -777,8 +812,19 @@ Powered by NGD Queue Master`;
                                   <td className="py-2.5 px-2 text-slate-200 font-bold">
                                     {player.kda || '—'}
                                   </td>
-                                  <td className="py-2.5 px-2 text-amber-400 font-bold">
-                                    {player.rating || '—'}
+                                  <td className="py-2.5 px-2 font-bold">
+                                    {(() => {
+                                      const num = parseFloat(player.rating || '0');
+                                      const color =
+                                        num >= 11.0
+                                          ? 'text-fuchsia-300 font-extrabold drop-shadow-[0_0_6px_rgba(217,70,239,0.5)]'
+                                          : num >= 6.8
+                                            ? 'text-yellow-400'
+                                            : num >= 4.0
+                                              ? 'text-slate-300'
+                                              : 'text-amber-500';
+                                      return <span className={color}>{player.rating || '—'}</span>;
+                                    })()}
                                   </td>
                                   <td className="py-2.5 px-3">
                                     <div className="text-slate-300">
@@ -834,21 +880,14 @@ Powered by NGD Queue Master`;
                                     {player.teamfightPct ? `${player.teamfightPct}%` : '—'}
                                   </td>
                                   <td className="py-2.5 px-2 text-right">
-                                    {player.medal ? (
-                                      <span
-                                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
-                                          player.medal.toLowerCase() === 'gold'
-                                            ? 'bg-yellow-500/20 text-yellow-300'
-                                            : player.medal.toLowerCase() === 'silver'
-                                            ? 'bg-slate-400/20 text-slate-300'
-                                            : 'bg-amber-600/20 text-amber-400'
-                                        }`}
-                                      >
-                                        {player.medal}
-                                      </span>
-                                    ) : (
-                                      '—'
-                                    )}
+                                    <MlbbMedalBadge
+                                      medal={player.medal}
+                                      rating={player.rating}
+                                      isMvp={isMvp}
+                                      isSvp={isSvp}
+                                      size="xs"
+                                      language={language}
+                                    />
                                   </td>
                                 </tr>
                               );
@@ -910,6 +949,7 @@ Powered by NGD Queue Master`;
       {/* Match Poster Export Modal */}
       {selectedMatchForPoster && (
         <MatchPosterModal
+          language={language}
           match={selectedMatchForPoster}
           onClose={() => setSelectedMatchForPoster(null)}
         />

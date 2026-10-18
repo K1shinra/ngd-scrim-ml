@@ -20,7 +20,7 @@ import {
   formatKdaValues,
   calculateKdaRatio,
 } from './ManualStatsEditor';
-import { calculateMlbbRating } from '../utils/scrimEngine';
+import { calculateMlbbRating, resolveMlbbMedal, getMedalMeta } from '../utils/scrimEngine';
 
 interface EditMatchStatsModalProps {
   match: MatchHistoryRecord | null;
@@ -173,14 +173,14 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
       }`;
     }
 
-    // Synchronize won flag and MLBB medals across both teams
+    // Synchronize won flag and 6-tier MLBB medals across both teams
     const updatedBlue = teamBlue.map((p) => {
       const isWinner = winner === 'Blue';
       const isMvp = isWinner && p.ign.toLowerCase() === mvpIgn.trim().toLowerCase();
       const isSvp = !isWinner && p.ign.toLowerCase() === (svpIgn?.trim() || '').toLowerCase();
-      const grading = calculateMlbbRating(p.kda, isWinner, isMvp, isSvp);
-      const medal = isMvp ? 'MVP' : isSvp ? 'SVP' : (p.medal || grading.medal);
+      const grading = calculateMlbbRating(p.kda, isWinner, isMvp, isSvp, p.rating);
       const rating = p.rating || grading.rating;
+      const medal = resolveMlbbMedal(rating, isMvp, isSvp, p.medal || grading.medal);
       const isFeeder = medal === 'Bronze' || p.isFeeder || grading.isFeeder;
       return {
         ...p,
@@ -196,9 +196,9 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
       const isWinner = winner === 'Red';
       const isMvp = isWinner && p.ign.toLowerCase() === mvpIgn.trim().toLowerCase();
       const isSvp = !isWinner && p.ign.toLowerCase() === (svpIgn?.trim() || '').toLowerCase();
-      const grading = calculateMlbbRating(p.kda, isWinner, isMvp, isSvp);
-      const medal = isMvp ? 'MVP' : isSvp ? 'SVP' : (p.medal || grading.medal);
+      const grading = calculateMlbbRating(p.kda, isWinner, isMvp, isSvp, p.rating);
       const rating = p.rating || grading.rating;
+      const medal = resolveMlbbMedal(rating, isMvp, isSvp, p.medal || grading.medal);
       const isFeeder = medal === 'Bronze' || p.isFeeder || grading.isFeeder;
       return {
         ...p,
@@ -368,7 +368,9 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                   onChange={(e) => setMvpIgn(e.target.value)}
                   className="w-full h-9 px-2.5 rounded-lg bg-white dark:bg-[#0b0f19] border border-amber-500/40 text-xs font-semibold text-amber-800 dark:text-amber-300 focus:outline-none focus:border-amber-400"
                 >
-                  <option value="">-- Pumili ng MVP --</option>
+                  <option value="">
+                    {language === 'tl' ? '-- Pumili ng MVP --' : '-- Select Match MVP --'}
+                  </option>
                   {allPlayers.map((p, idx) => (
                     <option key={`${p.ign}-${idx}`} value={p.ign}>
                       {p.ign} ({p.selectedRole})
@@ -585,39 +587,63 @@ export const EditMatchStatsModal: React.FC<EditMatchStatsModalProps> = ({
                       {/* MLBB Medal & Rating Input */}
                       <div className="flex items-center gap-1.5 shrink-0">
                         <select
-                          value={p.medal || (p.isMvp ? 'MVP' : 'Silver')}
+                          value={p.medal || resolveMlbbMedal(p.rating, p.isMvp, false)}
                           onChange={(e) => {
                             const m = e.target.value;
+                            const isF = m === 'Bronze';
+                            // If selecting Mythic tiers and rating < 11.0, suggest 11.5
+                            let newRating = p.rating;
+                            const num = parseFloat(p.rating || '0');
+                            if ((m === 'Mythic MVP' || m === 'Mythic SVP' || m === 'Mythic Gold') && (isNaN(num) || num < 11.0)) {
+                              newRating = '11.5';
+                            } else if ((m === 'Gold MVP' || m === 'Gold SVP') && (num >= 11.0 || isNaN(num))) {
+                              newRating = '10.2';
+                            } else if (m === 'Bronze' && (num >= 4.0 || isNaN(num))) {
+                              newRating = '3.5';
+                            }
                             updateBluePlayer(i, {
                               medal: m,
-                              isFeeder: m === 'Bronze',
+                              rating: newRating,
+                              isFeeder: isF,
                             });
                           }}
                           className={`h-8 px-2 rounded-lg font-bold text-[11px] border focus:outline-none cursor-pointer ${
-                            p.medal === 'MVP'
-                              ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/40'
-                              : p.medal === 'SVP'
-                                ? 'bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/40'
-                                : p.medal === 'Gold'
-                                  ? 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-400 border-yellow-500/40'
-                                  : p.medal === 'Bronze' || p.isFeeder
-                                    ? 'bg-amber-900/25 text-amber-600 dark:text-amber-500 border-amber-700/50'
-                                    : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                            (p.medal || '').includes('Mythic')
+                              ? 'bg-purple-900/40 text-purple-200 border-purple-500/60 shadow-[0_0_8px_rgba(192,132,252,0.3)]'
+                              : (p.medal || '').includes('MVP') || (p.medal || '') === 'Gold'
+                                ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border-yellow-500/50'
+                                : (p.medal || '') === 'Bronze' || p.isFeeder
+                                  ? 'bg-amber-900/30 text-amber-600 dark:text-amber-500 border-amber-700/60'
+                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
                           }`}
                         >
-                          <option value="MVP">👑 MVP</option>
-                          <option value="SVP">🥈 SVP</option>
-                          <option value="Gold">🥇 Gold</option>
-                          <option value="Silver">🥈 Silver</option>
-                          <option value="Bronze">{language === 'tl' ? '🥉 Bronze (Tanso)' : '🥉 Bronze'}</option>
+                          <option value="Mythic MVP">👑 Mythic MVP (Purple, ≥ 11.0)</option>
+                          <option value="Gold MVP">👑 Gold MVP (Gold, &lt; 11.0)</option>
+                          <option value="Mythic SVP">🛡️ Mythic SVP (Purple, ≥ 11.0)</option>
+                          <option value="Gold SVP">🛡️ Gold SVP (Gold, &lt; 11.0)</option>
+                          <option value="Mythic Gold">⭐ Mythic Gold (Purple, ≥ 11.0)</option>
+                          <option value="Gold">🥇 Gold (6.8 – 10.9)</option>
+                          <option value="Silver">🥈 Silver (4.0 – 6.7)</option>
+                          <option value="Bronze">{language === 'tl' ? '🥉 Bronze / Tanso (< 4.0)' : '🥉 Bronze (< 4.0)'}</option>
                         </select>
 
                         <input
                           type="text"
                           value={p.rating || ''}
-                          onChange={(e) => updateBluePlayer(i, { rating: e.target.value })}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const num = parseFloat(val);
+                            const autoMedal = !isNaN(num) && num > 0
+                              ? resolveMlbbMedal(num, p.isMvp, false, p.medal)
+                              : p.medal;
+                            updateBluePlayer(i, {
+                              rating: val,
+                              medal: autoMedal,
+                              isFeeder: autoMedal === 'Bronze' || (num > 0 && num < 4.0),
+                            });
+                          }}
                           placeholder="Score"
-                          title="MLBB Score / Rating (e.g. 10.5, 7.8, 3.4)"
+                          title="MLBB Score / Rating (e.g. 11.5, 9.8, 5.4, 3.2)"
                           className="w-14 h-8 px-1 text-center font-mono font-bold text-xs rounded-lg bg-white dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
                         />
                       </div>

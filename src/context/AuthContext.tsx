@@ -189,27 +189,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           : '';
       const hostname =
         typeof window !== 'undefined' ? window.location.hostname : 'domain';
+      const curLang =
+        (typeof window !== 'undefined'
+          ? localStorage.getItem('ngd_scrim_lang')
+          : null) || 'en';
+      const isTl = curLang === 'tl';
 
       if (
         code === 'auth/popup-closed-by-user' ||
         code === 'auth/cancelled-popup-request'
       ) {
-        const msg =
-          'Isinara ang Google Sign-In popup bago matapos ang pag-login. Kung kusa itong nagsara sa deployed site, gamitin ang Direct Squad Account Sign-In sa ibaba.';
+        const msg = isTl
+          ? 'Isinara ang Google Sign-In popup bago matapos ang pag-login. Kung kusa itong nagsara sa deployed site, gamitin ang Direct Squad Account Sign-In sa ibaba.'
+          : 'Google Sign-In popup was closed before completing login. You can also sign in via Direct Squad Account below.';
         setAuthError(msg);
         setAuthErrorCode(code);
         return { ok: false, error: msg, code };
       }
 
-      let msg = 'Hindi natuloy ang Google Sign-In. Pakisubukan ulit o gamitin ang Direct Squad Account Sign-In sa ibaba.';
+      let msg = isTl
+        ? 'Hindi natuloy ang Google Sign-In. Pakisubukan ulit o gamitin ang Direct Squad Account Sign-In sa ibaba.'
+        : 'Google Sign-In did not complete. Please retry or sign in using Direct Squad Account below.';
       if (code === 'auth/popup-blocked') {
-        msg =
-          'Na-block ng browser ang Google Sign-In popup. Pakipayagan ang pop-ups sa browser o gamitin ang Direct Squad Account Sign-In sa ibaba.';
+        msg = isTl
+          ? 'Na-block ng browser ang Google Sign-In popup. Pakipayagan ang pop-ups sa browser o gamitin ang Direct Squad Account Sign-In sa ibaba.'
+          : 'Browser blocked the Google Sign-In popup. Please allow popups or use Direct Squad Account below.';
       } else if (code === 'auth/unauthorized-domain') {
-        msg = `Hindi pa naka-whitelist ang deployed domain na ito (${hostname}) sa Firebase Google Popup. Maaari kang mag-sign in gamit ang Direct Squad Account Sign-In sa ibaba.`;
+        msg = isTl
+          ? `Hindi pa naka-whitelist ang deployed domain na ito (${hostname}) sa Firebase Google Popup. Maaari kang mag-sign in gamit ang Direct Squad Account Sign-In sa ibaba.`
+          : `This domain (${hostname}) is not yet authorized in Firebase for Google OAuth popup. You can sign in using Direct Squad Account below.`;
       } else if (code === 'auth/operation-not-supported-in-this-environment') {
-        msg =
-          'Hindi suportado ang Google Popup sa in-app browser (hal. Messenger/FB). Buksan sa Chrome/Safari o gamitin ang Direct Squad Account Sign-In sa ibaba.';
+        msg = isTl
+          ? 'Hindi suportado ang Google Popup sa in-app browser (hal. Messenger/FB). Buksan sa Chrome/Safari o gamitin ang Direct Squad Account Sign-In sa ibaba.'
+          : 'Google Popup is not supported in in-app browsers (e.g. Messenger/FB). Open in Chrome/Safari or use Direct Squad Account below.';
       }
 
       setAuthError(msg);

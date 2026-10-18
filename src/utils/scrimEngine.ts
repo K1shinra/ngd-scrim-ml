@@ -843,46 +843,278 @@ export function formatBattleResultGcText(record: MatchHistoryRecord): string {
  * Calculates Rating (3.0 - 15.0) and Medal (MVP / SVP / Gold / Silver / Bronze)
  * In MLBB, multiple players (1 to 5) can get Bronze / Tanso if their rating < 5.5 or deaths >= 6 with low KDA!
  */
+export type MlbbMedalGrade =
+  | 'Mythic MVP'
+  | 'Mythic SVP'
+  | 'Gold MVP'
+  | 'Gold SVP'
+  | 'Mythic Gold'
+  | 'Gold'
+  | 'Silver'
+  | 'Bronze';
+
+/**
+ * Resolves the exact 6-Tier Medal based on MLBB's latest Match Grading System:
+ * 1. Mythic MVP (Purple MVP) -> MVP / SVP with Score >= 11.0
+ * 2. Gold MVP (Gold MVP) -> MVP / SVP with Score < 11.0 (e.g. 6.9 - 10.9)
+ * 3. Mythic Gold (Purple Gold / Non-MVP) -> Non-MVP player with Score >= 11.0
+ * 4. Gold -> Non-MVP player with Score between 6.8 and 10.9
+ * 5. Silver -> Score between 4.0 and 6.7
+ * 6. Bronze -> Score below 4.0 (3.0 - 3.9)
+ */
+export function resolveMlbbMedal(
+  rating: number | string | undefined,
+  isMvp: boolean,
+  isSvp: boolean,
+  currentMedal?: string
+): MlbbMedalGrade {
+  const scoreNum = typeof rating === 'number' ? rating : parseFloat(rating || '0');
+  const hasScore = !isNaN(scoreNum) && scoreNum > 0;
+
+  // MVP (Winning team MVP)
+  if (isMvp || currentMedal === 'Mythic MVP' || currentMedal === 'Gold MVP' || currentMedal === 'MVP') {
+    if (hasScore) {
+      return scoreNum >= 11.0 ? 'Mythic MVP' : 'Gold MVP';
+    }
+    return currentMedal === 'Mythic MVP' ? 'Mythic MVP' : 'Gold MVP';
+  }
+
+  // SVP (Defeat MVP / Losing team MVP)
+  if (isSvp || currentMedal === 'Mythic SVP' || currentMedal === 'Gold SVP' || currentMedal === 'SVP') {
+    if (hasScore) {
+      return scoreNum >= 11.0 ? 'Mythic SVP' : 'Gold SVP';
+    }
+    return currentMedal === 'Mythic SVP' ? 'Mythic SVP' : 'Gold SVP';
+  }
+
+  // Non-MVP with Score >= 11.0 is Mythic Gold (Purple Gold)
+  if (currentMedal === 'Mythic Gold') {
+    return 'Mythic Gold';
+  }
+
+  if (hasScore) {
+    if (scoreNum >= 11.0) return 'Mythic Gold';
+    if (scoreNum >= 6.8) return 'Gold';
+    if (scoreNum >= 4.0) return 'Silver';
+    return 'Bronze';
+  }
+
+  // Fallbacks based on string
+  if (currentMedal === 'Bronze') return 'Bronze';
+  if (currentMedal === 'Silver') return 'Silver';
+  if (currentMedal === 'Gold') return 'Gold';
+  return 'Silver';
+}
+
+/**
+ * Returns metadata and styles for the 6-tier medal hierarchy
+ */
+export function getMedalMeta(medalStr: string | undefined, language: 'en' | 'tl' = 'en') {
+  const clean = (medalStr || '').toLowerCase();
+
+  if (clean.includes('mythic mvp') || (clean.includes('mvp') && !clean.includes('gold'))) {
+    return {
+      tier: 1,
+      type: 'Mythic MVP' as const,
+      label: 'Mythic MVP',
+      shortLabel: 'M-MVP',
+      colorHex: '#c084fc',
+      borderHex: '#a855f7',
+      bgGradient: 'from-purple-900/60 via-fuchsia-900/50 to-indigo-900/60',
+      badgeClass:
+        'bg-gradient-to-r from-purple-600/30 via-fuchsia-600/30 to-indigo-600/30 text-purple-200 border-purple-400/60 shadow-[0_0_12px_rgba(192,132,252,0.35)]',
+      iconEmoji: '👑',
+      scoreRange: 'Score ≥ 11.0',
+      desc: language === 'tl' ? 'Mythic MVP (Score ≥ 11.0)' : 'Mythic MVP (Score ≥ 11.0)',
+    };
+  }
+
+  if (clean.includes('gold mvp')) {
+    return {
+      tier: 2,
+      type: 'Gold MVP' as const,
+      label: 'Gold MVP',
+      shortLabel: 'G-MVP',
+      colorHex: '#f1c40f',
+      borderHex: '#f59e0b',
+      bgGradient: 'from-amber-900/50 via-yellow-900/40 to-amber-950/60',
+      badgeClass:
+        'bg-gradient-to-r from-amber-500/25 via-yellow-400/25 to-amber-600/25 text-amber-300 border-amber-400/60 shadow-[0_0_10px_rgba(245,158,11,0.3)]',
+      iconEmoji: '👑',
+      scoreRange: 'Score < 11.0',
+      desc: language === 'tl' ? 'Gold MVP (Score < 11.0)' : 'Gold MVP (Score < 11.0)',
+    };
+  }
+
+  if (clean.includes('mythic svp') || (clean.includes('svp') && clean.includes('mythic'))) {
+    return {
+      tier: 1,
+      type: 'Mythic SVP' as const,
+      label: 'Mythic SVP',
+      shortLabel: 'M-SVP',
+      colorHex: '#c084fc',
+      borderHex: '#a855f7',
+      bgGradient: 'from-purple-900/60 via-indigo-900/50 to-purple-950/60',
+      badgeClass:
+        'bg-gradient-to-r from-purple-600/30 via-indigo-600/30 to-purple-800/30 text-purple-200 border-purple-400/60 shadow-[0_0_12px_rgba(192,132,252,0.35)]',
+      iconEmoji: '🛡️',
+      scoreRange: 'Score ≥ 11.0',
+      desc: language === 'tl' ? 'Defeat MVP (Score ≥ 11.0)' : 'Defeat MVP (Score ≥ 11.0)',
+    };
+  }
+
+  if (clean.includes('gold svp') || clean.includes('svp')) {
+    return {
+      tier: 2,
+      type: 'Gold SVP' as const,
+      label: 'Gold SVP',
+      shortLabel: 'G-SVP',
+      colorHex: '#fbbf24',
+      borderHex: '#d97706',
+      bgGradient: 'from-amber-900/40 via-purple-950/40 to-amber-950/50',
+      badgeClass:
+        'bg-gradient-to-r from-amber-500/20 via-purple-500/20 to-amber-600/20 text-amber-200 border-amber-400/50',
+      iconEmoji: '🛡️',
+      scoreRange: 'Score < 11.0',
+      desc: language === 'tl' ? 'Defeat MVP (Score < 11.0)' : 'Defeat MVP (Score < 11.0)',
+    };
+  }
+
+  if (clean.includes('mythic gold') || clean.includes('purple gold')) {
+    return {
+      tier: 3,
+      type: 'Mythic Gold' as const,
+      label: 'Mythic Gold',
+      shortLabel: 'M-Gold',
+      colorHex: '#e879f9',
+      borderHex: '#d946ef',
+      bgGradient: 'from-purple-900/50 via-fuchsia-950/40 to-amber-950/40',
+      badgeClass:
+        'bg-gradient-to-r from-purple-700/30 via-fuchsia-600/25 to-amber-500/25 text-fuchsia-200 border-fuchsia-400/60 shadow-[0_0_10px_rgba(232,121,249,0.3)]',
+      iconEmoji: '⭐',
+      scoreRange: 'Score ≥ 11.0',
+      desc: language === 'tl' ? 'Purple Gold (Score ≥ 11.0)' : 'Mythic Gold (Score ≥ 11.0)',
+    };
+  }
+
+  if (clean.includes('gold')) {
+    return {
+      tier: 4,
+      type: 'Gold' as const,
+      label: 'Gold',
+      shortLabel: 'Gold',
+      colorHex: '#eab308',
+      borderHex: '#facc15',
+      bgGradient: 'from-yellow-950/40 to-amber-950/40',
+      badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
+      iconEmoji: '🥇',
+      scoreRange: 'Score 6.8 – 10.9',
+      desc: language === 'tl' ? 'Gold Medal (6.8 – 10.9)' : 'Gold Medal (6.8 – 10.9)',
+    };
+  }
+
+  if (clean.includes('silver')) {
+    return {
+      tier: 5,
+      type: 'Silver' as const,
+      label: 'Silver',
+      shortLabel: 'Silver',
+      colorHex: '#94a3b8',
+      borderHex: '#cbd5e1',
+      bgGradient: 'from-slate-900/40 to-slate-800/40',
+      badgeClass: 'bg-slate-400/20 text-slate-300 border-slate-400/40',
+      iconEmoji: '🥈',
+      scoreRange: 'Score 4.0 – 6.7',
+      desc: language === 'tl' ? 'Silver Medal (4.0 – 6.7)' : 'Silver Medal (4.0 – 6.7)',
+    };
+  }
+
+  // Bronze / Tanso (< 4.0)
+  return {
+    tier: 6,
+    type: 'Bronze' as const,
+    label: language === 'tl' ? 'Bronze (Tanso)' : 'Bronze',
+    shortLabel: 'Bronze',
+    colorHex: '#d97706',
+    borderHex: '#b45309',
+    bgGradient: 'from-amber-950/50 to-orange-950/50',
+    badgeClass: 'bg-amber-900/30 text-amber-500 border-amber-700/50',
+    iconEmoji: '🥉',
+    scoreRange: 'Score < 4.0 (3.0 – 3.9)',
+    desc: language === 'tl' ? 'Tanso Medal (< 4.0)' : 'Bronze Medal (< 4.0)',
+  };
+}
+
+/**
+ * MLBB In-Game Scoring & 6-Tier Medal Classification
+ * Calculates Rating (3.0 - 15.0) and assigns the exact 6-tier medal hierarchy:
+ * 1. Mythic MVP (Score >= 11.0)
+ * 2. Gold MVP (Score < 11.0)
+ * 3. Mythic Gold (Non-MVP, Score >= 11.0)
+ * 4. Gold (Score 6.8 - 10.9)
+ * 5. Silver (Score 4.0 - 6.7)
+ * 6. Bronze (Score < 4.0)
+ */
 export function calculateMlbbRating(
   kda: string | undefined,
   won: boolean,
   isMvp = false,
-  isSvp = false
+  isSvp = false,
+  manualRating?: string | number
 ): {
   rating: string;
-  medal: 'MVP' | 'SVP' | 'Gold' | 'Silver' | 'Bronze';
+  medal: MlbbMedalGrade;
   isFeeder: boolean;
 } {
+  // If manual rating passed in
+  if (manualRating !== undefined && manualRating !== null && manualRating !== '') {
+    const parsed = typeof manualRating === 'number' ? manualRating : parseFloat(manualRating);
+    if (!isNaN(parsed) && parsed > 0) {
+      const clamped = Math.min(15.0, Math.max(3.0, parsed));
+      const rStr = clamped.toFixed(1);
+      const score = parseFloat(rStr);
+      const medal = resolveMlbbMedal(score, isMvp, isSvp);
+      const isFeeder = medal === 'Bronze' || score < 4.0;
+      return { rating: rStr, medal, isFeeder };
+    }
+  }
+
   if (isMvp) {
-    let r = 10.5;
+    let r = 11.5;
     if (kda) {
       const parts = kda.split(/[\/\-:\s]+/).map((p) => parseInt(p.trim(), 10));
       const k = parts[0] || 0;
       const d = parts[1] || 0;
       const a = parts[2] || 0;
       const ratio = (k + a) / Math.max(1, d);
-      r = Math.min(15.0, Math.max(10.0, 9.5 + ratio * 0.4));
+      r = Math.min(15.0, Math.max(9.5, 9.8 + ratio * 0.45));
     }
-    return { rating: r.toFixed(1), medal: 'MVP', isFeeder: false };
+    const rStr = r.toFixed(1);
+    const score = parseFloat(rStr);
+    const medal: MlbbMedalGrade = score >= 11.0 ? 'Mythic MVP' : 'Gold MVP';
+    return { rating: rStr, medal, isFeeder: false };
   }
 
   if (isSvp) {
-    let r = 8.8;
+    let r = 9.8;
     if (kda) {
       const parts = kda.split(/[\/\-:\s]+/).map((p) => parseInt(p.trim(), 10));
       const k = parts[0] || 0;
       const d = parts[1] || 0;
       const a = parts[2] || 0;
       const ratio = (k + a) / Math.max(1, d);
-      r = Math.min(12.5, Math.max(8.0, 7.8 + ratio * 0.35));
+      r = Math.min(13.5, Math.max(7.5, 8.2 + ratio * 0.4));
     }
-    return { rating: r.toFixed(1), medal: 'SVP', isFeeder: false };
+    const rStr = r.toFixed(1);
+    const score = parseFloat(rStr);
+    const medal: MlbbMedalGrade = score >= 11.0 ? 'Mythic SVP' : 'Gold SVP';
+    return { rating: rStr, medal, isFeeder: false };
   }
 
   if (!kda) {
     return won
-      ? { rating: '7.5', medal: 'Silver', isFeeder: false }
-      : { rating: '5.0', medal: 'Bronze', isFeeder: true };
+      ? { rating: '7.5', medal: 'Gold', isFeeder: false }
+      : { rating: '4.8', medal: 'Silver', isFeeder: false };
   }
 
   const parts = kda.split(/[\/\-:\s]+/).map((p) => parseInt(p.trim(), 10));
@@ -893,20 +1125,29 @@ export function calculateMlbbRating(
 
   let rawScore: number;
   if (won) {
-    rawScore = 6.2 + ratio * 0.7 - Math.max(0, d - 3) * 0.2;
+    rawScore = 6.0 + ratio * 0.75 - Math.max(0, d - 3) * 0.25;
   } else {
-    rawScore = 4.2 + ratio * 0.6 - Math.max(0, d - 2) * 0.25;
+    rawScore = 4.2 + ratio * 0.65 - Math.max(0, d - 2) * 0.3;
   }
 
-  const clamped = Math.min(13.0, Math.max(3.0, rawScore));
+  const clamped = Math.min(13.5, Math.max(3.0, rawScore));
   const ratingStr = clamped.toFixed(1);
+  const scoreNum = parseFloat(ratingStr);
 
-  if (clamped >= 8.5) {
-    return { rating: ratingStr, medal: 'Gold', isFeeder: false };
-  } else if (clamped >= 5.5) {
-    return { rating: ratingStr, medal: 'Silver', isFeeder: false };
+  let medal: MlbbMedalGrade;
+  let isFeeder = false;
+
+  if (scoreNum >= 11.0) {
+    medal = 'Mythic Gold';
+  } else if (scoreNum >= 6.8) {
+    medal = 'Gold';
+  } else if (scoreNum >= 4.0) {
+    medal = 'Silver';
   } else {
-    return { rating: ratingStr, medal: 'Bronze', isFeeder: true };
+    medal = 'Bronze';
+    isFeeder = true;
   }
+
+  return { rating: ratingStr, medal, isFeeder };
 }
 

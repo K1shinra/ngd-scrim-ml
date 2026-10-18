@@ -19,6 +19,7 @@ interface ManualStatsEditorProps {
   teamRed: MatchParticipant[];
   onUpdateBluePlayer: (index: number, updated: Partial<MatchParticipant>) => void;
   onUpdateRedPlayer: (index: number, updated: Partial<MatchParticipant>) => void;
+  language?: 'en' | 'tl';
 }
 
 export function parseKdaValues(kdaStr?: string): {
@@ -51,6 +52,7 @@ export const ManualStatsEditor: React.FC<ManualStatsEditorProps> = ({
   teamRed,
   onUpdateBluePlayer,
   onUpdateRedPlayer,
+  language = 'en',
 }) => {
   // Modal state for quick touch-friendly tap picker
   const [activePickerPlayer, setActivePickerPlayer] = useState<{
@@ -340,7 +342,7 @@ export const ManualStatsEditor: React.FC<ManualStatsEditorProps> = ({
           <div>
             <label className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-0.5 flex items-center gap-1">
               <Shield className="w-3 h-3 text-blue-500" />
-              <span>Dmg Taken (Opsyonal)</span>
+              <span>{language === 'tl' ? 'Dmg Taken (Opsyonal)' : 'Dmg Taken (Optional)'}</span>
             </label>
             <input
               type="text"
@@ -369,12 +371,18 @@ export const ManualStatsEditor: React.FC<ManualStatsEditorProps> = ({
         <div>
           <p className="font-bold flex items-center gap-1.5">
             <Sparkles className="w-4 h-4 text-cyan-600 dark:text-[#00f2fe]" />
-            <span>Mabilisang Player Stats Input</span>
+            <span>{language === 'tl' ? 'Mabilisang Player Stats Input' : 'Fast Player Stats Input'}</span>
           </p>
           <p className="text-[11px] opacity-85 mt-0.5">
-            <strong>KDA:</strong> Piliin lang ang numero gamit ang dropdown o stepper (walang typing!).
+            <strong>KDA:</strong>{' '}
+            {language === 'tl'
+              ? 'Piliin lang ang numero gamit ang dropdown o stepper (walang typing!).'
+              : 'Select numbers using tap picker or stepper (no typing!).'}
             <br />
-            <strong>Hero Damage, Gold & Damage Taken:</strong> I-type ang halaga gamit ang keyboard.
+            <strong>Hero Damage, Gold & Damage Taken:</strong>{' '}
+            {language === 'tl'
+              ? 'I-type ang halaga gamit ang keyboard.'
+              : 'Type values directly with the keyboard.'}
           </p>
         </div>
         <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 shrink-0">
@@ -431,7 +439,9 @@ export const ManualStatsEditor: React.FC<ManualStatsEditorProps> = ({
                     {activePlayer.ign} (Team {activePickerPlayer.team})
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    I-tap ang mga numero para sa KDA — Walang typing!
+                    {language === 'tl'
+                      ? 'I-tap ang mga numero para sa KDA — Walang typing!'
+                      : 'Tap numbers for KDA — No typing needed!'}
                   </p>
                 </div>
               </div>
@@ -465,7 +475,7 @@ export const ManualStatsEditor: React.FC<ManualStatsEditorProps> = ({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs font-bold text-emerald-700 dark:text-emerald-400">
                 <span>🔥 Kills (K): {activeKda.kills}</span>
-                <span className="text-[11px] font-normal text-slate-400">Pumili ng numero:</span>
+                <span className="text-[11px] font-normal text-slate-400">{language === 'tl' ? 'Pumili ng numero:' : 'Select number:'}</span>
               </div>
               <div className="grid grid-cols-7 sm:grid-cols-11 gap-1">
                 {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 25].map(
@@ -498,7 +508,7 @@ export const ManualStatsEditor: React.FC<ManualStatsEditorProps> = ({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs font-bold text-rose-700 dark:text-rose-400">
                 <span>💀 Deaths (D): {activeKda.deaths}</span>
-                <span className="text-[11px] font-normal text-slate-400">Pumili ng numero:</span>
+                <span className="text-[11px] font-normal text-slate-400">{language === 'tl' ? 'Pumili ng numero:' : 'Select number:'}</span>
               </div>
               <div className="grid grid-cols-7 sm:grid-cols-10 gap-1">
                 {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20].map((num) => (
@@ -529,7 +539,7 @@ export const ManualStatsEditor: React.FC<ManualStatsEditorProps> = ({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs font-bold text-amber-700 dark:text-yellow-400">
                 <span>🤝 Assists (A): {activeKda.assists}</span>
-                <span className="text-[11px] font-normal text-slate-400">Pumili ng numero:</span>
+                <span className="text-[11px] font-normal text-slate-400">{language === 'tl' ? 'Pumili ng numero:' : 'Select number:'}</span>
               </div>
               <div className="grid grid-cols-7 sm:grid-cols-11 gap-1">
                 {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 25].map(
@@ -575,7 +585,7 @@ export const ManualStatsEditor: React.FC<ManualStatsEditorProps> = ({
                 className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs flex items-center gap-1 cursor-pointer"
               >
                 <Check className="w-3.5 h-3.5" />
-                <span>Tapos Na</span>
+                <span>{language === 'tl' ? 'Tapos Na' : 'Done'}</span>
               </button>
 
               <button
@@ -583,7 +593,7 @@ export const ManualStatsEditor: React.FC<ManualStatsEditorProps> = ({
                 onClick={goToNextPlayer}
                 className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700"
               >
-                <span>Susunod na Player</span>
+                <span>{language === 'tl' ? 'Susunod na Player' : 'Next Player'}</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
             </div>

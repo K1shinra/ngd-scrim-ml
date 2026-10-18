@@ -151,6 +151,17 @@ export interface ScrimSlot {
   assignedAt: string;
 }
 
+export type MlbbMedal =
+  | 'Mythic MVP'
+  | 'Mythic SVP'
+  | 'Gold MVP'
+  | 'Gold SVP'
+  | 'Mythic Gold'
+  | 'Gold'
+  | 'Silver'
+  | 'Bronze'
+  | string;
+
 export interface MatchParticipant {
   ign: string;
   selectedRole: MlbbRole;
@@ -168,7 +179,7 @@ export interface MatchParticipant {
   turretDamagePct?: number;
   teamfightPct?: number;
   gold?: number;
-  medal?: string; // 'MVP' | 'SVP' | 'Gold' | 'Silver' | 'Bronze'
+  medal?: MlbbMedal;
   isFeeder?: boolean;
   isMvp?: boolean;
   won?: boolean;

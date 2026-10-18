@@ -19,17 +19,20 @@ import {
   MatchParticipant,
   ROLE_META,
 } from '../data/ngdData';
+import { resolveMlbbMedal, getMedalMeta } from '../utils/scrimEngine';
 
 export type PosterTemplate = 'recap' | 'full10' | 'feeder' | 'leaders' | 'lineup';
 
 interface MatchPosterModalProps {
   match: MatchHistoryRecord;
   onClose: () => void;
+  language?: 'en' | 'tl';
 }
 
 export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
   match,
   onClose,
+  language = 'en',
 }) => {
   const [selectedTemplate, setSelectedTemplate] =
     useState<PosterTemplate>('recap');
@@ -240,48 +243,79 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
         winBannerY + 56
       );
 
-      // MVP Spotlight Box
+      // MVP Spotlight Box (Mythic MVP vs Gold MVP)
+      const winningMvpData = all10Players.find(
+        (p) => p.ign.toLowerCase() === match.mvpIgn.toLowerCase()
+      );
+      const mvpScore = parseFloat(winningMvpData?.rating || '10.5');
+      const isMythicMvp = mvpScore >= 11.0;
+      const mvpMeta = getMedalMeta(isMythicMvp ? 'Mythic MVP' : 'Gold MVP', language);
+
       const mvpBoxY = 245;
       const mvpBoxH = 110;
       const mvpGrad = ctx.createLinearGradient(60, mvpBoxY, width - 120, mvpBoxY);
-      mvpGrad.addColorStop(0, 'rgba(241, 196, 15, 0.14)');
-      mvpGrad.addColorStop(1, 'rgba(241, 196, 15, 0.04)');
+      if (isMythicMvp) {
+        mvpGrad.addColorStop(0, 'rgba(192, 132, 252, 0.22)');
+        mvpGrad.addColorStop(0.5, 'rgba(168, 85, 247, 0.12)');
+        mvpGrad.addColorStop(1, 'rgba(99, 102, 241, 0.05)');
+      } else {
+        mvpGrad.addColorStop(0, 'rgba(241, 196, 15, 0.18)');
+        mvpGrad.addColorStop(1, 'rgba(241, 196, 15, 0.04)');
+      }
       ctx.fillStyle = mvpGrad;
-      ctx.strokeStyle = '#f1c40f';
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = mvpMeta.colorHex;
+      ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.roundRect(60, mvpBoxY, width - 120, mvpBoxH, 14);
       ctx.fill();
       ctx.stroke();
 
       // MVP Badge text
-      ctx.fillStyle = '#f1c40f';
+      ctx.fillStyle = mvpMeta.colorHex;
       ctx.font = '900 20px "Montserrat", sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText('👑 MATCH MVP SPOTLIGHT', 90, mvpBoxY + 36);
+      const mvpBadgeTitle = isMythicMvp
+        ? '👑 MYTHIC MVP SPOTLIGHT (SCORE ≥ 11.0)'
+        : '👑 GOLD MVP SPOTLIGHT (SCORE < 11.0)';
+      ctx.fillText(mvpBadgeTitle, 90, mvpBoxY + 36);
 
       ctx.fillStyle = '#ffffff';
       ctx.font = '900 32px "Montserrat", sans-serif';
       ctx.fillText(match.mvpIgn, 90, mvpBoxY + 76);
 
-      const winningMvpData = all10Players.find(
-        (p) => p.ign.toLowerCase() === match.mvpIgn.toLowerCase()
-      );
-
-      ctx.fillStyle = '#fde047';
+      ctx.fillStyle = isMythicMvp ? '#e9d5ff' : '#fde047';
       ctx.font = 'bold 15px "JetBrains Mono", monospace';
-      const mvpStatsText = `RATING: ${winningMvpData?.rating || '10.5'}  ·  KDA: ${winningMvpData?.kda || 'MVP'}  ·  ROLE: ${winningMvpData ? ROLE_META[winningMvpData.assignedLane]?.gcLabel : 'Core'}`;
+      const mvpStatsText = `SCORE: ${winningMvpData?.rating || (isMythicMvp ? '11.5' : '10.2')} · KDA: ${winningMvpData?.kda || 'MVP'} · ROLE: ${winningMvpData ? ROLE_META[winningMvpData.assignedLane]?.gcLabel : 'Core'}`;
       ctx.fillText(mvpStatsText, 90, mvpBoxY + 98);
 
       // Defeat MVP / SVP Tag on right side of MVP box
       if (match.svpIgn) {
+        const losingSvpData = all10Players.find(
+          (p) => p.ign.toLowerCase() === match.svpIgn.toLowerCase()
+        );
+        const svpScore = parseFloat(losingSvpData?.rating || '9.0');
+        const isMythicSvp = svpScore >= 11.0;
+        const svpColor = isMythicSvp ? '#c084fc' : '#fbbf24';
+
         ctx.textAlign = 'right';
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = 'bold 14px "Montserrat", sans-serif';
-        ctx.fillText('DEFEAT MVP (SVP):', width - 90, mvpBoxY + 38);
-        ctx.fillStyle = '#e2e8f0';
+        ctx.fillStyle = svpColor;
+        ctx.font = 'bold 13px "Montserrat", sans-serif';
+        ctx.fillText(
+          isMythicSvp ? '🛡️ MYTHIC SVP (SCORE ≥ 11.0):' : '🛡️ GOLD SVP (SCORE < 11.0):',
+          width - 90,
+          mvpBoxY + 36
+        );
+        ctx.fillStyle = '#ffffff';
         ctx.font = '900 24px "Montserrat", sans-serif';
-        ctx.fillText(match.svpIgn, width - 90, mvpBoxY + 72);
+        ctx.fillText(match.svpIgn, width - 90, mvpBoxY + 68);
+
+        ctx.fillStyle = isMythicSvp ? '#e9d5ff' : '#fde047';
+        ctx.font = 'bold 13px "JetBrains Mono", monospace';
+        ctx.fillText(
+          `SCORE: ${losingSvpData?.rating || (isMythicSvp ? '11.0' : '9.0')} · KDA: ${losingSvpData?.kda || 'SVP'}`,
+          width - 90,
+          mvpBoxY + 92
+        );
       }
 
       // Two Column Lineup: Team Blue (Left) vs Team Red (Right)
@@ -409,20 +443,37 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
         // KDA & Score Rating
         ctx.fillStyle = '#e2e8f0';
         ctx.font = 'bold 15px "JetBrains Mono", monospace';
-        ctx.fillText(`KDA: ${player.kda || '—'}`, 480, y + 56);
+        ctx.fillText(`KDA: ${player.kda || '—'}`, 470, y + 56);
 
-        // Medal Badge
-        const medalText = player.medal || (isMvp ? 'MVP' : isSvp ? 'SVP' : 'Gold');
-        ctx.fillStyle =
-          medalText === 'MVP'
-            ? '#f1c40f'
-            : medalText === 'SVP'
-              ? '#c084fc'
-              : medalText === 'Bronze'
-                ? '#d97706'
-                : '#38bdf8';
-        ctx.font = '900 16px "Montserrat", sans-serif';
-        ctx.fillText(`⭐ ${medalText} (${player.rating || '8.0'})`, 670, y + 56);
+        // 6-Tier MLBB Medal Badge & Score Rating
+        const resolvedGrade = resolveMlbbMedal(player.rating, isMvp, isSvp, player.medal);
+        const medalMeta = getMedalMeta(resolvedGrade, language);
+
+        const badgeX = 640;
+        const badgeY = y + 33;
+        const badgeW = 205;
+        const badgeH = 34;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.strokeStyle = medalMeta.colorHex;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = medalMeta.colorHex;
+        ctx.font = '900 13px "Montserrat", sans-serif';
+        ctx.fillText(
+          `${medalMeta.iconEmoji} ${medalMeta.label.toUpperCase()}`,
+          badgeX + 10,
+          badgeY + 22
+        );
+
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 13px "JetBrains Mono", monospace';
+        ctx.fillText(`${player.rating || '—'}`, badgeX + badgeW - 10, badgeY + 22);
+        ctx.textAlign = 'left';
 
         // Data Breakdown: Damage & Teamfight %
         ctx.fillStyle = '#94a3b8';
@@ -430,12 +481,12 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
         const dmgText = player.heroDamage
           ? `DMG: ${player.heroDamage.toLocaleString()} (${player.heroDamagePct || 0}%)`
           : `TF: ${player.teamfightPct || 50}%`;
-        ctx.fillText(dmgText, 890, y + 56);
+        ctx.fillText(dmgText, 865, y + 56);
 
         const pushText = player.turretDamage
           ? `PUSH: ${player.turretDamage.toLocaleString()}`
           : `TF: ${player.teamfightPct || 50}%`;
-        ctx.fillText(pushText, 1030, y + 56);
+        ctx.fillText(pushText, 1025, y + 56);
       });
     }
 
@@ -469,7 +520,7 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
       ctx.textAlign = 'center';
       ctx.fillStyle = '#d97706';
       ctx.font = '900 20px "Montserrat", sans-serif';
-      ctx.fillText('🥉 OFFICIAL NGD BRONZE MEDALIST AWARD 🥉', width / 2, memeBoxY + 50);
+      ctx.fillText('🥉 OFFICIAL NGD BRONZE MEDALIST AWARD (SCORE < 4.0) 🥉', width / 2, memeBoxY + 50);
 
       ctx.fillStyle = '#ffffff';
       ctx.font = '900 44px "Montserrat", sans-serif';
@@ -523,9 +574,9 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
         statsY,
         statW,
         110,
-        '⭐ TANSO RATING',
-        feeder?.rating || '3.8',
-        'Bronze Grade'
+        language === 'tl' ? '⭐ TANSO RATING' : '⭐ BRONZE RATING',
+        feeder?.rating || '3.6',
+        'Score < 4.0'
       );
 
       // Box 3: Damage Taken / TF
@@ -680,8 +731,12 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
       ctx.font = '900 16px "Montserrat", sans-serif';
       ctx.fillText(
         allTansos.length > 1
-          ? `🪓 TANSO SQUAD ALERT (${allTansos.length} PLAYERS WITH BRONZE)`
-          : '🪓 TANSO / FEEDER ALERT (MOST CASUALTIES)',
+          ? (language === 'tl'
+              ? `🪓 TANSO SQUAD ALERT (${allTansos.length} PLAYERS WITH BRONZE)`
+              : `🪓 BRONZE SQUAD ALERT (${allTansos.length} PLAYERS WITH BRONZE)`)
+          : (language === 'tl'
+              ? '🪓 TANSO / FEEDER ALERT (MOST CASUALTIES)'
+              : '🪓 BRONZE / FEEDER ALERT (MOST CASUALTIES)'),
         90,
         feederAlertY + 36
       );
@@ -886,10 +941,21 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
       ctx.font = '900 18px "Montserrat", sans-serif';
       ctx.fillText(p.ign, x + 62, rowY + 28);
 
-      // KDA & Rating
+      // 6-Tier Medal Badge Pill (Top-Right of Row)
+      const isPlayerSvp = match.svpIgn && p.ign.toLowerCase() === match.svpIgn.toLowerCase();
+      const pGrade = resolveMlbbMedal(p.rating, isPlayerMvp, Boolean(isPlayerSvp), p.medal);
+      const pMedalMeta = getMedalMeta(pGrade, language);
+
+      ctx.textAlign = 'right';
+      ctx.fillStyle = pMedalMeta.colorHex;
+      ctx.font = '900 12px "Montserrat", sans-serif';
+      ctx.fillText(`${pMedalMeta.iconEmoji} ${pMedalMeta.shortLabel}`, x + w - 16, rowY + 28);
+      ctx.textAlign = 'left';
+
+      // KDA & Score Rating
       ctx.fillStyle = '#94a3b8';
       ctx.font = '500 13px "JetBrains Mono", monospace';
-      const statsStr = `${p.kda || '—'} ${p.rating ? `· ⭐ ${p.rating}` : ''}`;
+      const statsStr = `${p.kda || '—'} · Score: ${p.rating || '—'}`;
       ctx.fillText(statsStr, x + 16, rowY + 52);
 
       // Hero DMG or Push
@@ -1100,7 +1166,7 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
             }`}
           >
             <Skull className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">🥉 Feeder Award</span>
+            <span className="truncate">{language === 'tl' ? '🥉 Tanso Award' : '🥉 Feeder / Bronze'}</span>
           </button>
 
           <button
