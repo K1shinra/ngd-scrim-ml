@@ -513,6 +513,208 @@ export function detectSeriesFormatFromText(rawText: string): 'BO1' | 'BO3' | 'BO
   return null;
 }
 
+export function detectSingleRoleToken(str: string): MlbbRole | null {
+  if (!str) return null;
+  const s = str.trim().toLowerCase();
+  if (!s) return null;
+
+  // Exact or direct matches
+  if (/^(?:exp\s*lane|exp-lane|explane|exp|offlane|off)$/i.test(s)) return 'EXP Lane';
+  if (/^(?:jungle|jungler|jgl|jung|core|retri|hyper)$/i.test(s)) return 'Jungle';
+  if (/^(?:mid\s*lane|mid-lane|midlane|mid|mage)$/i.test(s)) return 'Mid Lane';
+  if (/^(?:gold\s*lane|gold-lane|goldlane|gold|mm|marksman)$/i.test(s)) return 'Gold Lane';
+  if (/^(?:roamer|roam|tank|support|supp)$/i.test(s)) return 'Roamer';
+  if (/^(?:flex\s*role|flex|multi|all|fill)$/i.test(s)) return 'Flex Role';
+
+  // Substring checks on word boundaries
+  if (/\b(?:exp\s*lane|explane|offlane)\b/i.test(s)) return 'EXP Lane';
+  if (/\b(?:jungler|jungle|core|retri|hyper)\b/i.test(s)) return 'Jungle';
+  if (/\b(?:mid\s*lane|midlane|mage)\b/i.test(s)) return 'Mid Lane';
+  if (/\b(?:gold\s*lane|goldlane|marksman)\b/i.test(s)) return 'Gold Lane';
+  if (/\b(?:roamer|roam|support)\b/i.test(s)) return 'Roamer';
+
+  // Distinct short tokens
+  const words = s.split(/[\s_\-\/\.,]+/);
+  for (const w of words) {
+    if (w === 'exp' || w === 'off') return 'EXP Lane';
+    if (w === 'jgl' || w === 'jung' || w === 'core' || w === 'retri') return 'Jungle';
+    if (w === 'mid' || w === 'mage') return 'Mid Lane';
+    if (w === 'gold' || w === 'mm') return 'Gold Lane';
+    if (w === 'roam' || w === 'tank' || w === 'supp') return 'Roamer';
+    if (w === 'flex' || w === 'multi' || w === 'all') return 'Flex Role';
+  }
+
+  return null;
+}
+
+export function detectCompositeRoleToken(str: string): { primary: MlbbRole; secondary?: MlbbRole } | null {
+  if (!str) return null;
+  const cleaned = str.replace(/[()\[\]【】]/g, '').trim();
+  if (cleaned.includes('/') || cleaned.includes(',') || cleaned.includes('&')) {
+    const parts = cleaned.split(/[\/,&]+/).map((p) => p.trim());
+    const r1 = detectSingleRoleToken(parts[0]);
+    const r2 = parts[1] ? detectSingleRoleToken(parts[1]) : null;
+    if (r1) {
+      return { primary: r1, secondary: r2 && r2 !== r1 ? r2 : undefined };
+    }
+  }
+  const single = detectSingleRoleToken(cleaned);
+  if (single) {
+    return { primary: single };
+  }
+  return null;
+}
+
+/**
+ * Extracts the true IGN and Role from any MLBB format, whether:
+ * - "EXP LANE — Halimaw" (Role — IGN)
+ * - "ROAMER —joshy" (Role — IGN without trailing space)
+ * - "Halimaw — EXP LANE" (IGN — Role)
+ * - "Setsuko. (Mid/Gold)" (IGN (Role))
+ * - "[EXP] xTriggered." ([Role] IGN)
+ * - "EXP: Halimaw" (Role: IGN)
+ * - "EXP LANE Halimaw" (Role IGN space separated)
+ */
+export function extractRoleAndIgnFromLine(
+  raw: string,
+  knownPlayers?: PlayerProfile[],
+  fallbackLaneIndex?: number
+): { cleanIgn: string; role: MlbbRole; secondaryRole?: MlbbRole; roleLabel: string } {
+  // Strip emojis, invisible zero-width characters, and normalize spaces
+  let text = raw
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[✅⏳🔥⚡👤🎮⚔️🏆📅🚫⚠️📌📢]/g, '')
+    .trim();
+
+  let primary: MlbbRole = 'Flex Role';
+  let secondary: MlbbRole | undefined = undefined;
+  let ign = text;
+
+  // 1. Bracket role at start: e.g. "[EXP LANE] Halimaw" or "(JUNGLE) fav.."
+  const startBracketMatch = text.match(
+    /^[\[(【]([^\])】]+)[\])】]\s*[-–—―─━:|=/>•·~→]*\s*(.+)$/i
+  );
+  if (startBracketMatch) {
+    const roleFound = detectCompositeRoleToken(startBracketMatch[1]);
+    if (roleFound) {
+      primary = roleFound.primary;
+      secondary = roleFound.secondary;
+      ign = startBracketMatch[2].trim();
+      return finalizeExtractedPlayer(ign, primary, secondary, knownPlayers, fallbackLaneIndex);
+    }
+  }
+
+  // 2. Bracket role at end: e.g. "Halimaw [EXP LANE]" or "Setsuko. (Mid/Gold)"
+  const endBracketMatch = text.match(
+    /^(.+?)\s*[-–—―─━:|=/>•·~→]*\s*[\[(【]([^\])】]+)[\])】]$/i
+  );
+  if (endBracketMatch) {
+    const roleFound = detectCompositeRoleToken(endBracketMatch[2]);
+    if (roleFound) {
+      primary = roleFound.primary;
+      secondary = roleFound.secondary;
+      ign = endBracketMatch[1].trim();
+      return finalizeExtractedPlayer(ign, primary, secondary, knownPlayers, fallbackLaneIndex);
+    }
+  }
+
+  // 3. Role at start (prefix), followed by optional separator and the player's IGN:
+  // e.g. "EXP LANE — Halimaw", "ROAMER —joshy", "JUNGLE —  syven kai", "EXP LANE: Halimaw", "EXP LANE Halimaw"
+  const prefixMatch = text.match(
+    /^(EXP\s*LANE|EXP-LANE|EXPLANE|EXP|OFFLANE|OFF|JUNGLE|JUNGLER|JGL|JUNG|CORE|RETRI|HYPER|MID\s*LANE|MID-LANE|MIDLANE|MID|MAGE|GOLD\s*LANE|GOLD-LANE|GOLDLANE|GOLD|MM|MARKSMAN|ROAMER|ROAM|TANK|SUPPORT|SUPP|FLEX\s*ROLE|FLEX|MULTI|ALL|FILL)(?:\s*[\/,&+]\s*(EXP\s*LANE|EXP-LANE|EXPLANE|EXP|OFFLANE|OFF|JUNGLE|JUNGLER|JGL|JUNG|CORE|RETRI|HYPER|MID\s*LANE|MID-LANE|MIDLANE|MID|MAGE|GOLD\s*LANE|GOLD-LANE|GOLDLANE|GOLD|MM|MARKSMAN|ROAMER|ROAM|TANK|SUPPORT|SUPP|FLEX\s*ROLE|FLEX|MULTI|ALL|FILL))?\s*[-–—―─━:|=/>•·~→]*\s*(.+)$/i
+  );
+  if (prefixMatch && prefixMatch[3]?.trim()) {
+    const r1 = detectSingleRoleToken(prefixMatch[1]);
+    const r2 = prefixMatch[2] ? detectSingleRoleToken(prefixMatch[2]) : undefined;
+    if (r1) {
+      primary = r1;
+      secondary = r2 && r2 !== r1 ? r2 : undefined;
+      ign = prefixMatch[3].trim();
+      return finalizeExtractedPlayer(ign, primary, secondary, knownPlayers, fallbackLaneIndex);
+    }
+  }
+
+  // 4. Role at end (suffix), preceded by player IGN and optional separator:
+  // e.g. "Halimaw — EXP LANE", "joshy - ROAMER", "Akira MID LANE"
+  const suffixMatch = text.match(
+    /^(.+?)\s*[-–—―─━:|=/>•·~→]+\s*(EXP\s*LANE|EXP-LANE|EXPLANE|EXP|OFFLANE|OFF|JUNGLE|JUNGLER|JGL|JUNG|CORE|RETRI|HYPER|MID\s*LANE|MID-LANE|MIDLANE|MID|MAGE|GOLD\s*LANE|GOLD-LANE|GOLDLANE|GOLD|MM|MARKSMAN|ROAMER|ROAM|TANK|SUPPORT|SUPP|FLEX\s*ROLE|FLEX|MULTI|ALL|FILL)(?:\s*[\/,&+]\s*(EXP\s*LANE|EXP-LANE|EXPLANE|EXP|OFFLANE|OFF|JUNGLE|JUNGLER|JGL|JUNG|CORE|RETRI|HYPER|MID\s*LANE|MID-LANE|MIDLANE|MID|MAGE|GOLD\s*LANE|GOLD-LANE|GOLDLANE|GOLD|MM|MARKSMAN|ROAMER|ROAM|TANK|SUPPORT|SUPP|FLEX\s*ROLE|FLEX|MULTI|ALL|FILL))?$/i
+  );
+  if (suffixMatch && suffixMatch[1]?.trim()) {
+    const r1 = detectSingleRoleToken(suffixMatch[2]);
+    const r2 = suffixMatch[3] ? detectSingleRoleToken(suffixMatch[3]) : undefined;
+    if (r1) {
+      primary = r1;
+      secondary = r2 && r2 !== r1 ? r2 : undefined;
+      ign = suffixMatch[1].trim();
+      return finalizeExtractedPlayer(ign, primary, secondary, knownPlayers, fallbackLaneIndex);
+    }
+  }
+
+  // 5. Separator in the middle: e.g. "Left — Right"
+  const sepMatch = text.match(/^(.*?)\s*[-–—―─━:|=/>•·~→]+\s*(.*)$/);
+  if (sepMatch && sepMatch[1] && sepMatch[2]) {
+    const leftPart = sepMatch[1].trim();
+    const rightPart = sepMatch[2].trim();
+
+    const leftRole = detectCompositeRoleToken(leftPart);
+    const rightRole = detectCompositeRoleToken(rightPart);
+
+    if (leftRole) {
+      primary = leftRole.primary;
+      secondary = leftRole.secondary;
+      ign = rightPart;
+      return finalizeExtractedPlayer(ign, primary, secondary, knownPlayers, fallbackLaneIndex);
+    } else if (rightRole) {
+      primary = rightRole.primary;
+      secondary = rightRole.secondary;
+      ign = leftPart;
+      return finalizeExtractedPlayer(ign, primary, secondary, knownPlayers, fallbackLaneIndex);
+    }
+  }
+
+  // 6. No role found in line: fallback to looking up IGN in known roster or default lane
+  return finalizeExtractedPlayer(ign, 'Flex Role', undefined, knownPlayers, fallbackLaneIndex);
+}
+
+function finalizeExtractedPlayer(
+  rawIgn: string,
+  primary: MlbbRole,
+  secondary: MlbbRole | undefined,
+  knownPlayers?: PlayerProfile[],
+  fallbackLaneIndex?: number
+): { cleanIgn: string; role: MlbbRole; secondaryRole?: MlbbRole; roleLabel: string } {
+  let cleanIgn = cleanPlayerIgn(rawIgn);
+  // Strip any accidental leading or trailing dashes, colons, arrows, or symbols (preserving internal/trailing periods)
+  cleanIgn = cleanIgn.replace(/^[-–—―─━:|=/>•·~→\s]+|[-–—―─━:|=/>•·~→\s]+$/g, '').trim();
+
+  // If role is Flex Role or unset, check if known roster has a defined role
+  if (primary === 'Flex Role' && knownPlayers && knownPlayers.length > 0) {
+    const found = knownPlayers.find(
+      (p) => p.ign.toLowerCase() === cleanIgn.toLowerCase()
+    );
+    if (found) {
+      primary = found.primaryRole;
+      secondary =
+        found.secondaryRole !== found.primaryRole ? found.secondaryRole : undefined;
+    } else if (fallbackLaneIndex !== undefined) {
+      // Standard MLBB role order: 0=EXP, 1=Jungle, 2=Mid, 3=Gold, 4=Roamer
+      const coreRoles: MlbbRole[] = ['EXP Lane', 'Jungle', 'Mid Lane', 'Gold Lane', 'Roamer'];
+      const lane = coreRoles[fallbackLaneIndex % 5];
+      if (lane) {
+        primary = lane;
+      }
+    }
+  }
+
+  return {
+    cleanIgn,
+    role: primary,
+    secondaryRole: secondary,
+    roleLabel: formatRolePairText(primary, secondary),
+  };
+}
+
 export function parseTraditionalGcText(
   rawText: string,
   knownPlayers?: PlayerProfile[]
@@ -525,155 +727,165 @@ export function parseTraditionalGcText(
     roleLabel: string;
   }[] = [];
 
-  const detectRoleToken = (token: string): MlbbRole | null => {
-    const t = token.toLowerCase().trim();
-    if (t.includes('jung') || t.includes('jgl') || t.includes('core'))
-      return 'Jungle';
-    if (t.includes('exp')) return 'EXP Lane';
-    if (t.includes('mid') || t.includes('mage')) return 'Mid Lane';
-    if (t.includes('gold') || t.includes('mm')) return 'Gold Lane';
-    if (t.includes('roam') || t.includes('tank') || t.includes('supp'))
-      return 'Roamer';
-    if (t.includes('multi') || t.includes('flex') || t.includes('all'))
-      return 'Flex Role';
-    return null;
-  };
-
   const lines = rawText.split(/\r?\n/);
-  const numberedEntries: { slotNum: number; raw: string }[] = [];
+  const rawItems: { parsedNum: number; rawText: string; explicitOffset?: number }[] = [];
   const unnumberedCandidates: string[] = [];
+
   let isUnderListHeader = false;
+  let sectionTeamOffset = 0;
+  let sectionGameOffset = 0;
 
   for (const line of lines) {
-    const trimmed = line.trim();
+    const trimmed = line
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\u00A0/g, ' ')
+      .trim();
     if (!trimmed) continue;
 
-    // Check if entering a list section e.g. "LIST:", "DROP IGN ONLY"
-    if (/^LIST\s*:/i.test(trimmed)) {
-      isUnderListHeader = true;
+    // Check for explicit section indicators
+    if (/^(?:TEAM\s*RED|RED\s*TEAM|SECOND\s*PICK|TEAM\s*2|TEAM\s*B)\b/i.test(trimmed)) {
+      sectionTeamOffset = 5;
+      continue;
+    }
+    if (/^(?:TEAM\s*BLUE|BLUE\s*TEAM|FIRST\s*PICK|TEAM\s*1|TEAM\s*A)\b/i.test(trimmed)) {
+      sectionTeamOffset = 0;
+      continue;
+    }
+    if (/^(?:GAME\s*2|BATCH\s*2|SET\s*2)\b/i.test(trimmed)) {
+      sectionGameOffset = 10;
+      sectionTeamOffset = 0;
+      continue;
+    }
+    if (/^(?:GAME\s*3|BATCH\s*3|SET\s*3)\b/i.test(trimmed)) {
+      sectionGameOffset = 20;
+      sectionTeamOffset = 0;
+      continue;
+    }
+
+    // Ignore decorative headers, banners, or disclaimer footers
+    if (
+      /^[━─=\-_~*#]{3,}$/.test(trimmed) ||
+      /^(?:⚔️|🏆|📅|🚫|⚠️|📌|📢)/.test(trimmed) ||
+      /^(?:NEXTGENDOMINATORS|NGD|MLBB\s*5V5|SCRIM\s*LIST|DATE:|TIME:|CHANGING\s*ROLE|IF\s*YOU\s*LIST|TEAM\s*SHUFFLE|SHUFFLE|STANDBY|RULES)\b/i.test(
+        trimmed
+      )
+    ) {
+      if (/^LIST\s*:/i.test(trimmed)) {
+        isUnderListHeader = true;
+      }
       continue;
     }
 
     // Matches any numbered list pattern, e.g.:
+    // "1. EXP LANE — Halimaw"
+    // "5. ROAMER —joshy"
     // "1. xTriggered"
-    // "4.hapon"
-    // "7.S"
     // "1) Tadashi"
-    // "1. Estranghero - Jungler/Roam"
-    // "1. Setsuko. (Gold/Mid)"
     // "1 - Akira"
     const match = trimmed.match(
-      /^[\s(]*(\d{1,2})[\s.)\-]*(?:[.\-–—:])?\s*([^\n\r]+)$/
+      /^[\s(]*(\d{1,2})[\s.)\-]*(?:[.\-–—―─━:])?\s*([^\n\r]+)$/
     );
 
-      if (match) {
-        const slotNum = parseInt(match[1], 10);
-        if (slotNum >= 1 && slotNum <= 50) {
-          numberedEntries.push({ slotNum, raw: match[2].trim() });
-          continue;
-        }
+    if (match) {
+      const parsedNum = parseInt(match[1], 10);
+      if (parsedNum >= 1 && parsedNum <= 50) {
+        rawItems.push({
+          parsedNum,
+          rawText: match[2].trim(),
+          explicitOffset:
+            sectionGameOffset + sectionTeamOffset > 0
+              ? sectionGameOffset + sectionTeamOffset
+              : undefined,
+        });
+        continue;
       }
+    }
 
-    // If not numbered, but under a "LIST:" header and not another header
+    // Non-numbered candidate lines
     if (
-      isUnderListHeader &&
-      !/^(?:NGD|BO\d|DROP|OCTOBER|NOVEMBER|DECEMBER|JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER)\b/i.test(
-        trimmed
-      )
+      isUnderListHeader ||
+      detectSingleRoleToken(trimmed) ||
+      trimmed.includes('—') ||
+      trimmed.includes('–') ||
+      trimmed.includes('-') ||
+      trimmed.includes(':')
     ) {
       unnumberedCandidates.push(trimmed);
     }
   }
 
-  // If we found numbered entries, use them
-  if (numberedEntries.length > 0) {
-    for (const item of numberedEntries) {
-      const rest = item.raw;
-      let rawIgn = rest;
-      let rolePart = '';
+  // Process numbered entries with robust 2-team (1-5 for Blue + 1-5 for Red = Slots 1-10) automatic offset
+  if (rawItems.length > 0) {
+    let autoOffset = 0;
+    let lastRawNum = 0;
+    const occupiedSlots = new Set<number>();
 
-      const splitDash = rest.split(/\s*[-–—:]\s*(.+)/);
-      if (splitDash.length >= 2 && detectRoleToken(splitDash[1])) {
-        rawIgn = splitDash[0];
-        rolePart = splitDash[1];
-      } else {
-        const parenMatch = rest.match(/^(.+?)\s*\(([^)]+)\)$/);
-        if (parenMatch && detectRoleToken(parenMatch[2])) {
-          rawIgn = parenMatch[1];
-          rolePart = parenMatch[2];
+    // Check if the items represent a standard 10-player 5v5 (5 Blue + 5 Red)
+    // E.g. two sets of 1..5: first 5 are Blue, next 5 are Red
+    const isTwoSetsOfFive =
+      rawItems.length === 10 &&
+      rawItems[0].parsedNum === 1 &&
+      rawItems[4].parsedNum === 5 &&
+      rawItems[5].parsedNum === 1 &&
+      rawItems[9].parsedNum === 5;
+
+    for (let i = 0; i < rawItems.length; i++) {
+      const item = rawItems[i];
+      const rawNum = item.parsedNum;
+
+      if (isTwoSetsOfFive) {
+        // Guaranteed perfect mapping: 0..4 -> 1..5 (Blue), 5..9 -> 6..10 (Red)
+        autoOffset = i < 5 ? 0 : 5;
+      } else if (item.explicitOffset !== undefined) {
+        autoOffset = item.explicitOffset;
+        lastRawNum = 0;
+      } else if (rawNum <= lastRawNum) {
+        // Repeated numbers! E.g. 1..5 for Team Blue, then 1..5 for Team Red!
+        if (lastRawNum === 5 && rawNum === 1) {
+          autoOffset += 5;
+        } else if (lastRawNum === 10 && rawNum === 1) {
+          autoOffset += 10;
         } else {
-          rawIgn = rest;
+          autoOffset += lastRawNum >= 8 ? 10 : 5;
         }
       }
 
-      const cleanIgn = cleanPlayerIgn(rawIgn);
-      if (!cleanIgn) continue;
+      let finalSlot = rawNum + autoOffset;
+      lastRawNum = rawNum;
 
-      let primary: MlbbRole = 'Flex Role';
-      let secondary: MlbbRole | undefined = undefined;
-
-      if (rolePart) {
-        const parts = rolePart.replace(/[✅⏳]/g, '').split(/[\/,&]+/);
-        primary = detectRoleToken(parts[0] || '') || 'Flex Role';
-        secondary = parts[1]
-          ? detectRoleToken(parts[1]) || undefined
-          : undefined;
-      } else if (knownPlayers && knownPlayers.length > 0) {
-        const found = knownPlayers.find(
-          (p) =>
-            p.ign.toLowerCase() === cleanIgn.toLowerCase() ||
-            cleanIgn.toLowerCase().includes(p.ign.toLowerCase()) ||
-            p.ign.toLowerCase().includes(cleanIgn.toLowerCase())
-        );
-        if (found) {
-          primary = found.primaryRole;
-          secondary =
-            found.secondaryRole !== found.primaryRole
-              ? found.secondaryRole
-              : undefined;
-        }
+      // Safety check: Avoid slot collision if list has irregular repeat
+      while (occupiedSlots.has(finalSlot) && finalSlot < 50) {
+        finalSlot++;
       }
 
+      // Infer fallback lane by 0-indexed position within the 5-man team (0=EXP, 1=Jungle, 2=Mid, 3=Gold, 4=Roam)
+      const fallbackLaneIdx = (finalSlot - 1) % 5;
+      const parsed = extractRoleAndIgnFromLine(item.rawText, knownPlayers, fallbackLaneIdx);
+      if (!parsed.cleanIgn) continue;
+
+      occupiedSlots.add(finalSlot);
       results.push({
-        slotNum: item.slotNum,
-        ign: cleanIgn,
-        role: primary,
-        secondaryRole: secondary,
-        roleLabel: formatRolePairText(primary, secondary),
+        slotNum: finalSlot,
+        ign: parsed.cleanIgn,
+        role: parsed.role,
+        secondaryRole: parsed.secondaryRole,
+        roleLabel: parsed.roleLabel,
       });
     }
   } else if (unnumberedCandidates.length > 0) {
-    // Fill slots 1, 2, 3... from sequential non-numbered candidates
+    // Fill slots 1, 2, 3... sequentially from non-numbered lines
     let slotIdx = 1;
     for (const cand of unnumberedCandidates.slice(0, 50)) {
-      const cleanIgn = cleanPlayerIgn(cand);
-      if (!cleanIgn) continue;
-
-      let primary: MlbbRole = 'Flex Role';
-      let secondary: MlbbRole | undefined = undefined;
-
-      if (knownPlayers && knownPlayers.length > 0) {
-        const found = knownPlayers.find(
-          (p) =>
-            p.ign.toLowerCase() === cleanIgn.toLowerCase() ||
-            cleanIgn.toLowerCase().includes(p.ign.toLowerCase()) ||
-            p.ign.toLowerCase().includes(cleanIgn.toLowerCase())
-        );
-        if (found) {
-          primary = found.primaryRole;
-          secondary =
-            found.secondaryRole !== found.primaryRole
-              ? found.secondaryRole
-              : undefined;
-        }
-      }
+      const fallbackLaneIdx = (slotIdx - 1) % 5;
+      const parsed = extractRoleAndIgnFromLine(cand, knownPlayers, fallbackLaneIdx);
+      if (!parsed.cleanIgn) continue;
 
       results.push({
         slotNum: slotIdx,
-        ign: cleanIgn,
-        role: primary,
-        secondaryRole: secondary,
-        roleLabel: formatRolePairText(primary, secondary),
+        ign: parsed.cleanIgn,
+        role: parsed.role,
+        secondaryRole: parsed.secondaryRole,
+        roleLabel: parsed.roleLabel,
       });
       slotIdx++;
     }

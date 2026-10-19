@@ -317,9 +317,10 @@ Powered by NGD Queue Master`;
                         })()}
 
                         {match.svpIgn && (() => {
+                          const svpIgn = match.svpIgn;
                           const allP = [...match.teamBlue, ...match.teamRed];
                           const svpData = allP.find(
-                            (p) => p.ign.toLowerCase() === match.svpIgn.toLowerCase()
+                            (p) => p.ign.toLowerCase() === svpIgn.toLowerCase()
                           );
                           return (
                             <span className="inline-flex items-center gap-1.5">
@@ -610,7 +611,7 @@ Powered by NGD Queue Master`;
                           <tbody className="divide-y divide-slate-800/60 font-mono">
                             {match.teamBlue.map((player) => {
                               const isMvp = player.ign.toLowerCase() === match.mvpIgn.toLowerCase();
-                              const isSvp = match.svpIgn && player.ign.toLowerCase() === match.svpIgn.toLowerCase();
+                              const isSvp = Boolean(match.svpIgn && player.ign.toLowerCase() === match.svpIgn.toLowerCase());
                               const isFeeder =
                                 player.isFeeder ||
                                 player.medal?.toLowerCase() === 'bronze' ||
@@ -772,7 +773,7 @@ Powered by NGD Queue Master`;
                           <tbody className="divide-y divide-slate-800/60 font-mono">
                             {match.teamRed.map((player) => {
                               const isMvp = player.ign.toLowerCase() === match.mvpIgn.toLowerCase();
-                              const isSvp = match.svpIgn && player.ign.toLowerCase() === match.svpIgn.toLowerCase();
+                              const isSvp = Boolean(match.svpIgn && player.ign.toLowerCase() === match.svpIgn.toLowerCase());
                               const isFeeder =
                                 player.isFeeder ||
                                 player.medal?.toLowerCase() === 'bronze' ||

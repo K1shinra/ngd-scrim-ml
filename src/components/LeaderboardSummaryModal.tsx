@@ -179,7 +179,7 @@ export const LeaderboardSummaryModal: React.FC<LeaderboardSummaryModalProps> = (
                   : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              📥 I-paste ang Leaderboard
+              📥 {language === 'tl' ? 'I-paste ang Leaderboard' : 'Paste Leaderboard'}
             </button>
           </div>
           <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
@@ -192,9 +192,15 @@ export const LeaderboardSummaryModal: React.FC<LeaderboardSummaryModalProps> = (
           {activeView === 'paste' ? (
             <div className="space-y-4">
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-800 dark:text-yellow-300">
-                <p className="font-bold">📋 I-paste dito ang GC Leaderboards Text</p>
+                <p className="font-bold">
+                  {language === 'tl'
+                    ? '📋 I-paste dito ang GC Leaderboards Text'
+                    : '📋 Paste GC Leaderboards Text Here'}
+                </p>
                 <p className="text-[11px] opacity-80 mt-0.5">
-                  Awtomatikong babasahin ang Overall Rating, Top Kills, Top Gold, Top Assists, Top Hero Damage, KDA, at Damage Taken.
+                  {language === 'tl'
+                    ? 'Awtomatikong babasahin ang Overall Rating, Top Kills, Top Gold, Top Assists, Top Hero Damage, KDA, at Damage Taken.'
+                    : 'Automatically reads Overall Rating, Top Kills, Top Gold, Top Assists, Top Hero Damage, KDA, and Damage Taken.'}
                 </p>
               </div>
 
@@ -219,7 +225,7 @@ export const LeaderboardSummaryModal: React.FC<LeaderboardSummaryModalProps> = (
                   }}
                   className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer"
                 >
-                  📋 I-paste mula sa Clipboard
+                  📋 {language === 'tl' ? 'I-paste mula sa Clipboard' : 'Paste from Clipboard'}
                 </button>
 
                 <button

@@ -290,8 +290,9 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
 
       // Defeat MVP / SVP Tag on right side of MVP box
       if (match.svpIgn) {
+        const svpIgn = match.svpIgn;
         const losingSvpData = all10Players.find(
-          (p) => p.ign.toLowerCase() === match.svpIgn.toLowerCase()
+          (p) => p.ign.toLowerCase() === svpIgn.toLowerCase()
         );
         const svpScore = parseFloat(losingSvpData?.rating || '9.0');
         const isMythicSvp = svpScore >= 11.0;
@@ -380,9 +381,10 @@ export const MatchPosterModal: React.FC<MatchPosterModalProps> = ({
         const isMvp =
           player.ign.toLowerCase() === match.mvpIgn.toLowerCase() &&
           player.team === match.winner;
-        const isSvp =
+        const isSvp = Boolean(
           match.svpIgn &&
-          player.ign.toLowerCase() === match.svpIgn.toLowerCase();
+          player.ign.toLowerCase() === match.svpIgn.toLowerCase()
+        );
         const isBlue = player.team === 'Blue';
 
         // Row Card Background

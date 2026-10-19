@@ -1129,12 +1129,67 @@ export default function App() {
       ensurePlayerInRoster(entry.ign, entry.role, entry.secondaryRole);
     }
 
+    // Simultaneously populate liveMatch Team Blue (Slots 1–5) and Team Red (Slots 6–10)
+    const blueEntries = parsed.filter((p) => p.slotNum >= 1 && p.slotNum <= 5);
+    const redEntries = parsed.filter((p) => p.slotNum >= 6 && p.slotNum <= 10);
+
+    if (blueEntries.length > 0 || redEntries.length > 0) {
+      const mapEntriesTo5 = (
+        entries: typeof parsed,
+        isBlue: boolean
+      ): MatchParticipant[] => {
+        return Array.from({ length: 5 }, (_, i) => {
+          const entry = entries[i];
+          const defaultLane = CORE_FIVE_ROLES[i];
+          if (entry) {
+            const lane = entry.role !== 'Flex Role' ? entry.role : defaultLane;
+            return {
+              ign: entry.ign,
+              selectedRole: entry.role,
+              secondaryRole: entry.secondaryRole,
+              roleLabel: entry.roleLabel,
+              assignedLane: lane,
+              winrateSnapshot: getPlayerWinrate(entry.ign, players),
+            };
+          }
+          const existing = isBlue ? liveMatch.teamBlue[i] : liveMatch.teamRed[i];
+          return (
+            existing || {
+              ign: `Player ${isBlue ? i + 1 : i + 6}`,
+              selectedRole: defaultLane,
+              roleLabel: ROLE_META[defaultLane].gcLabel,
+              assignedLane: defaultLane,
+              winrateSnapshot: 65,
+            }
+          );
+        });
+      };
+
+      const newBlue = mapEntriesTo5(blueEntries, true);
+      const newRed = mapEntriesTo5(redEntries, false);
+
+      setLiveMatch((prev) => ({
+        ...prev,
+        matchId: `CUSTOM-5V5-${String(matchHistory.length + 1).padStart(2, '0')}`,
+        roomName: prev.roomName || 'NGD Scrim 5v5',
+        startedAt: timeLabel,
+        teamBlue: newBlue,
+        teamRed: newRed,
+        mvpIgn: newBlue[0]?.ign || 'Halimaw',
+        shuffleNote: rawText.toLowerCase().includes('shuffle')
+          ? 'Team Shuffle loaded · Blue (Slots 1–5) vs Red (Slots 6–10)'
+          : 'Lineup loaded from Scrim List · Blue (1–5) vs Red (6–10)',
+        blueSeriesWins: 0,
+        redSeriesWins: 0,
+      }));
+    }
+
     setShowPasteBox(false);
     if (notify) {
       triggerToast(
         language === 'tl'
-          ? `⚡ Na-auto fill agad ang ${parsed.length} players sa mga slots! (Slots 1–${parsed.length})`
-          : `⚡ Auto-filled ${parsed.length} players into slots! (Slots 1–${parsed.length})`
+          ? `⚡ Na-auto fill ang ${parsed.length} players! Puno ang Team Blue (Slots 1–5) at Team Red (Slots 6–10)! Handa na para sa Scrim!`
+          : `⚡ Auto-filled ${parsed.length} players! Team Blue (Slots 1–5) and Team Red (Slots 6–10) are ready!`
       );
     }
     return true;
@@ -1249,7 +1304,11 @@ export default function App() {
       }
       return updated;
     });
-    triggerToast(`Na-clear ang Game ${setIdx + 1} (Slots ${start + 1}–${start + 10}).`);
+    triggerToast(
+      language === 'tl'
+        ? `Na-clear ang Game ${setIdx + 1} (Slots ${start + 1}–${start + 10}).`
+        : `Cleared Game ${setIdx + 1} (Slots ${start + 1}–${start + 10}).`
+    );
   };
 
   const handleCopySingleGameSet = async (setIdx: number) => {
@@ -2439,7 +2498,9 @@ export default function App() {
                       <span>Auto-Detect Scrim 5v5 List (1-10)</span>
                     </span>
                     <span className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
-                      I-paste dito — automatic mapupunta sa mga slot agad!
+                      {language === 'tl'
+                        ? 'I-paste dito — automatic mapupunta sa mga slot at 5v5 teams agad!'
+                        : 'Paste here — slots & 5v5 teams will be auto-filled instantly!'}
                     </span>
                   </div>
 
@@ -2457,8 +2518,8 @@ export default function App() {
                         handleAutoFillSlotsFromText(pasted, true);
                       }
                     }}
-                    placeholder={`NGD SCRIM 5v5\nBO3 DRAFT\nLIST:\n1. xTriggered\n2. sintopia\n3. Tadashi\n4.hapon\n5. Db sion\n6. Setsuko.\n7.S\n8. Lucks\n9.HALIMAW\n10. Akira.`}
-                    rows={6}
+                    placeholder={`1. EXP LANE — Halimaw\n2. JUNGLE — fav..\n3. MID LANE — ezra\n4. GOLD LANE — Setsuko.\n5. ROAMER — Sion\n1. EXP LANE — xTriggered.\n2. JUNGLE — syven kai\n3. MID LANE — Akira.\n4. GOLD LANE — Whis\n5. ROAMER — joshy\n\nTeam Shuffle🔀`}
+                    rows={7}
                     className="w-full p-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-cyan-500"
                   />
 
@@ -2469,7 +2530,11 @@ export default function App() {
                       className="min-h-[36px] px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-700 dark:text-[#00f2fe] font-bold text-xs flex items-center gap-1.5 cursor-pointer"
                     >
                       <ClipboardPaste className="w-3.5 h-3.5 shrink-0" />
-                      <span>I-paste mula sa Clipboard</span>
+                      <span>
+                        {language === 'tl'
+                          ? 'I-paste mula sa Clipboard'
+                          : 'Paste from Clipboard'}
+                      </span>
                     </button>
 
                     <div className="flex items-center gap-2">
@@ -2485,7 +2550,9 @@ export default function App() {
                         onClick={() => handleAutoFillSlotsFromText(pasteRawText, true)}
                         className="min-h-[36px] px-4 py-1.5 rounded-lg bg-cyan-600 dark:bg-[#00f2fe] text-white dark:text-slate-950 font-bold text-xs cursor-pointer shadow-xs"
                       >
-                        ⚡ I-fill sa mga Slots (1–10)
+                        {language === 'tl'
+                          ? '⚡ I-fill sa mga Slots at Teams (1–10)'
+                          : '⚡ Auto-Fill Slots & Teams (1–10)'}
                       </button>
                     </div>
                   </div>
@@ -3104,8 +3171,20 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* Lineup Options: No Shuffle (1-5 vs 6-10) | Auto-Balance | Shuffle Again | Copy */}
+                {/* Lineup Options: Quick Paste 5v5 | No Shuffle (1-5 vs 6-10) | Auto-Balance | Shuffle Again | Copy */}
                 <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full md:w-auto min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('queue');
+                      setShowPasteBox(true);
+                    }}
+                    className="min-h-[42px] px-3.5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white dark:bg-[#00f2fe] dark:hover:bg-cyan-300 dark:text-slate-950 font-display font-bold text-xs flex items-center justify-center gap-1.5 min-w-0 cursor-pointer shadow-xs"
+                    title={language === 'tl' ? 'I-paste ang 5v5 Scrim List' : 'Quick Paste 5v5 Scrim List'}
+                  >
+                    <ClipboardPaste className="w-4 h-4 shrink-0" />
+                    <span className="truncate">⚡ {language === 'tl' ? 'I-paste ang List' : 'Quick Paste 5v5'}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => handleStartDirectLineup5v5('batch1', false)}
@@ -5108,11 +5187,15 @@ export default function App() {
                     unlinkMyIgn();
                     setClaimIgnInput('');
                     setClaimIgnModalOpen(false);
-                    triggerToast('Na-unlink na ang IGN.');
+                    triggerToast(
+                      language === 'tl'
+                        ? 'Na-unlink na ang IGN.'
+                        : 'IGN unlinked.'
+                    );
                   }}
                   className="px-3 py-2 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500 hover:text-white text-xs font-bold transition cursor-pointer"
                 >
-                  I-unlink
+                  {language === 'tl' ? 'I-unlink' : 'Unlink'}
                 </button>
               ) : (
                 <div />
